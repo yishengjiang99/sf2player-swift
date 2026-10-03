@@ -191,3 +191,19 @@ final class SpecFidelityTests: XCTestCase {
         XCTAssertGreaterThan(peak, 0.01)
     }
 }
+
+final class SpecOfflineTests: XCTestCase {
+    func testOfflineRendererAppliesFidelity() {
+        let tracks = [SF2TrackState(trackIndex: 0, regions: SF2RegionList([makeRegion()]))]
+        let events: [SF2SynthEvent] = [
+            .init(kind: .noteOn, frame: 0, trackIndex: 0, channel: 0, note: 60, velocity: 127),
+            .init(kind: .controlChange, frame: 100, trackIndex: 0, channel: 0, note: 7, velocity: 50),
+        ]
+        let gbk = SF2OfflineRenderer.renderOfflineSequence(sampleRate: 44100, length: 400, tracks: tracks, events: events)
+        let spec = SF2OfflineRenderer.renderOfflineSequence(sampleRate: 44100, length: 400, tracks: tracks, events: events,
+                                                            fidelity: .spec)
+        // gbk ignores CC7 events; spec scales by (50/100)^2 after frame 100.
+        XCTAssertEqual(gbk.left[50], gbk.left[300], accuracy: 1e-6)
+        XCTAssertEqual(spec.left[300] / spec.left[50], 0.25, accuracy: 1e-4)
+    }
+}
