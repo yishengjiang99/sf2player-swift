@@ -1,0 +1,12 @@
+SF2Engine: SoundFont 2 parser and voice synth shared by AI Camera - Music Reader
+(yishengjiang99/omr-sheet-cam) and AI Music Radar (yishengjiang99/earsheet).
+Copyright (C) 2026 Yisheng Jiang
+SPDX-License-Identifier: AGPL-3.0-or-later (full text in LICENSE)
+
+SF2Engine is a Swift port of yishengjiang99/gbk (commit b43f004a7e95321d2decde2e604350b014dcd105:
+sf2-parser.ts, src/sf2-renderer.ts) by the same author. It was extracted from
+omr-sheet-cam Packages/SF2Player.
+
+Not in git: the GeneralUser GS SoundFont 2.0.2 (GeneralUser-GS.sf2) used by the tests is by
+S. Christian Collins (https://github.com/mrbumpy409/GeneralUser-GS), GeneralUser GS License v2.0.
+scripts/fetch-soundfont downloads it from the pin in soundfont.lock.

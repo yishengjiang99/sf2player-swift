@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Downloads the pinned GeneralUser-GS.sf2 (soundfont.lock) into models/ and checks its SHA-256.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DEST="${MODELS_DIR:-$ROOT/models}"
+if command -v sha256sum >/dev/null 2>&1; then sha256() { sha256sum "$1" | awk '{print $1}'; }
+else sha256() { shasum -a 256 "$1" | awk '{print $1}'; }; fi
+mkdir -p "$DEST"
+grep -Ev '^[[:space:]]*(#|$)' "$ROOT/soundfont.lock" | while read -r want name url; do
+  target="$DEST/$name"
+  if [ -f "$target" ] && [ "$(sha256 "$target")" = "$want" ]; then echo "skip $name (sha256 ok)"; continue; fi
+  tmp="$(mktemp)"
+  curl -fL --retry 3 --retry-delay 2 -sS -o "$tmp" "$url"
+  have="$(sha256 "$tmp")"
+  if [ "$have" != "$want" ]; then rm -f "$tmp"; echo "sha256 mismatch for $name: $have != $want" >&2; exit 1; fi
+  mv "$tmp" "$target"; echo "fetched $name"
+done
