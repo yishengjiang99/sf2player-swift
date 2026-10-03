@@ -94,6 +94,7 @@ public final class SF2SoundFont: @unchecked Sendable {
     private let cacheLock = NSLock()
     private var sampleCache: [SampleKey: SF2SampleBuffer] = [:]
     private var regionCache: [Int: SF2RegionList] = [:]
+    private var specRegionCache: [Int: SF2RegionList] = [:]
 
     /// Presets without the terminal EOP record (gbk `getPresetRows`). Index == preset index.
     public var presets: ArraySlice<SF2PresetHeader> { phdr.dropLast() }
@@ -256,18 +257,26 @@ public final class SF2SoundFont: @unchecked Sendable {
     }
 
     /// Cached `buildRegionsForPreset(index, {decodeToFloat32, normalize, includeStereoLinks: true})`.
-    public func regionList(forPreset index: Int) throws -> SF2RegionList {
+    /// `.spec` builds SoundFont 2.04 regions (zone override rules, modulators); `.gbk` is gbk's merge.
+    public func regionList(forPreset index: Int, fidelity: SF2Fidelity = .gbk) throws -> SF2RegionList {
         cacheLock.lock()
-        if let hit = regionCache[index] { cacheLock.unlock(); return hit }
+        if let hit = (fidelity == .spec ? specRegionCache : regionCache)[index] { cacheLock.unlock(); return hit }
         cacheLock.unlock()
-        let list = SF2RegionList(try buildRegionsForPreset(index))
+        let list = SF2RegionList(try buildRegionsForPreset(index, fidelity: fidelity))
         cacheLock.lock(); defer { cacheLock.unlock() }
-        if let hit = regionCache[index] { return hit }
-        regionCache[index] = list
+        if fidelity == .spec {
+            if let hit = specRegionCache[index] { return hit }
+            specRegionCache[index] = list
+        } else {
+            if let hit = regionCache[index] { return hit }
+            regionCache[index] = list
+        }
         return list
     }
 
-    public func buildRegionsForPreset(_ presetIndex: Int, normalize: Bool = true, includeStereoLinks: Bool = true) throws -> [SF2Region] {
+    public func buildRegionsForPreset(_ presetIndex: Int, normalize: Bool = true, includeStereoLinks: Bool = true,
+                                      fidelity: SF2Fidelity = .gbk) throws -> [SF2Region] {
+        if fidelity == .spec { return try buildSpecRegions(presetIndex, normalize: normalize, includeStereoLinks: includeStereoLinks) }
         let last = phdr.count - 1
         guard presetIndex >= 0, presetIndex < last else { throw SF2Error.presetIndexOutOfRange(presetIndex) }
         let presetZones = zones(bags: pbag, gens: pgen, from: phdr[presetIndex].presetBagNdx, to: phdr[presetIndex + 1].presetBagNdx)
@@ -322,7 +331,97 @@ public final class SF2SoundFont: @unchecked Sendable {
         return out
     }
 
-    private func makeRegion(_ g: [Int: Int], normalize: Bool, includeStereoLinks: Bool) -> SF2Region? {
+    // MARK: - SoundFont 2.04 build (SF2Fidelity.spec)
+
+    /// Generators a preset zone may not set (8.1.2/8.1.3: sample offsets, ids, sampleModes, ...).
+    static let instrumentOnlyGens: Set<Int> = [Gen.startAddrsOffset, Gen.endAddrsOffset, Gen.startloopAddrsOffset,
+        Gen.endloopAddrsOffset, Gen.startAddrsCoarseOffset, Gen.endAddrsCoarseOffset, Gen.startloopAddrsCoarseOffset,
+        Gen.endloopAddrsCoarseOffset, Gen.keynum, Gen.velocity, Gen.sampleModes, Gen.exclusiveClass, Gen.overridingRootKey,
+        Gen.sampleID, Gen.instrument]
+
+    /// 8.1.3 defaults of the additive generators (a preset value is added to the instrument value or this).
+    static func genDefault(_ k: Int) -> Int {
+        switch k {
+        case Gen.initialFilterFc: return 13500
+        case Gen.delayModLFO, Gen.delayVibLFO, Gen.delayModEnv, Gen.attackModEnv, Gen.holdModEnv, Gen.decayModEnv,
+             Gen.releaseModEnv, Gen.delayVolEnv, Gen.attackVolEnv, Gen.holdVolEnv, Gen.decayVolEnv, Gen.releaseVolEnv:
+            return -12000
+        case Gen.scaleTuning: return 100
+        default: return 0
+        }
+    }
+
+    static func intersectRange(_ a: Int?, _ b: Int?) -> Int? {
+        guard let a else { return b }
+        guard let b else { return a }
+        let lo = max(a & 0xFF, b & 0xFF), hi = min((a >> 8) & 0xFF, (b >> 8) & 0xFF)
+        return lo > hi ? nil : (lo | hi << 8)
+    }
+
+    /// 9.4: local generators replace global ones at each level; preset values add to instrument values
+    /// (ranges intersect); 9.5 modulator merge.
+    private func buildSpecRegions(_ presetIndex: Int, normalize: Bool, includeStereoLinks: Bool) throws -> [SF2Region] {
+        let last = phdr.count - 1
+        guard presetIndex >= 0, presetIndex < last else { throw SF2Error.presetIndexOutOfRange(presetIndex) }
+        let pFrom = phdr[presetIndex].presetBagNdx, pTo = phdr[presetIndex + 1].presetBagNdx
+        let presetZones = zones(bags: pbag, gens: pgen, from: pFrom, to: pTo)
+        let presetMods = zoneMods(bags: pbag, mods: pmod, from: pFrom, to: pTo)
+        let hasPresetGlobal = !presetZones.isEmpty && presetZones[0][Gen.instrument] == nil
+        var regions: [SF2Region] = []
+        for (pi, pz) in presetZones.enumerated() {
+            guard let instIndex = pz[Gen.instrument] else { continue }
+            guard instIndex >= 0, instIndex < inst.count - 1 else { throw SF2Error.instrumentIndexOutOfRange(instIndex) }
+            var pg = hasPresetGlobal ? presetZones[0] : [:]
+            for (k, v) in pz { pg[k] = v }
+            let iFrom = inst[instIndex].instBagNdx, iTo = inst[instIndex + 1].instBagNdx
+            let instZones = zones(bags: ibag, gens: igen, from: iFrom, to: iTo)
+            let instMods = zoneMods(bags: ibag, mods: imod, from: iFrom, to: iTo)
+            let hasInstGlobal = !instZones.isEmpty && instZones[0][Gen.sampleID] == nil
+            for (ii, iz) in instZones.enumerated() {
+                guard iz[Gen.sampleID] != nil else { continue }
+                var g = hasInstGlobal ? instZones[0] : [:]
+                for (k, v) in iz { g[k] = v }
+                var empty = false
+                for (k, v) in pg where !Self.instrumentOnlyGens.contains(k) {
+                    if k == Gen.keyRange || k == Gen.velRange {
+                        if let r = Self.intersectRange(g[k], v) { g[k] = r } else { empty = true }
+                    } else {
+                        g[k] = (g[k] ?? Self.genDefault(k)) + v
+                    }
+                }
+                if empty { continue }
+                guard var region = makeRegion(g, normalize: normalize, includeStereoLinks: includeStereoLinks, spec: true)
+                else { continue }
+                region.modulators = SF2Modulator.merge(
+                    instGlobal: hasInstGlobal ? instMods[0] : [], instLocal: instMods[ii],
+                    presetGlobal: hasPresetGlobal ? presetMods[0] : [], presetLocal: presetMods[pi])
+                regions.append(region)
+            }
+        }
+        return regions
+    }
+
+    private func zoneMods(bags: [SF2Bag], mods: [SF2ModRecord], from bagStart: Int, to bagEnd: Int) -> [[SF2Modulator]] {
+        var out: [[SF2Modulator]] = []
+        var bi = bagStart
+        while bi < bagEnd, bi < bags.count {
+            let s = bags[bi].modNdx
+            let e = bi + 1 < bags.count ? bags[bi + 1].modNdx : mods.count
+            var z: [SF2Modulator] = []
+            var mi = s
+            while mi < e, mi < mods.count {
+                let m = SF2Modulator(mods[mi])
+                // 9.5: a later identical modulator in the same zone replaces the earlier one.
+                if let i = z.firstIndex(where: { $0.sameIdentity(m) }) { z[i] = m } else { z.append(m) }
+                mi += 1
+            }
+            out.append(z)
+            bi += 1
+        }
+        return out
+    }
+
+    private func makeRegion(_ g: [Int: Int], normalize: Bool, includeStereoLinks: Bool, spec: Bool = false) -> SF2Region? {
         guard let sampleID = g[Gen.sampleID], sampleID >= 0, sampleID < shdr.count else { return nil }
         let sh = shdr[sampleID]
         let n = samples.count
@@ -366,9 +465,11 @@ public final class SF2SoundFont: @unchecked Sendable {
                               sustainCb: g[Gen.sustainVolEnv] ?? 0, releaseTc: g[Gen.releaseVolEnv] ?? -12000),
             modEnv: SF2ModEnv(delayTc: g[Gen.delayModEnv] ?? -12000, attackTc: g[Gen.attackModEnv] ?? -12000,
                               holdTc: g[Gen.holdModEnv] ?? -12000, decayTc: g[Gen.decayModEnv] ?? -12000,
-                              sustain: g[Gen.sustainModEnv].map { min(1, max(0, Double($0) / 1000)) } ?? 0,
+                              sustain: spec ? min(1, max(0, 1 - Double(g[Gen.sustainModEnv] ?? 0) / 1000))
+                                  : g[Gen.sustainModEnv].map { min(1, max(0, Double($0) / 1000)) } ?? 0,
                               releaseTc: g[Gen.releaseModEnv] ?? -12000),
-            initialFilterFcCents: Self.sanitizeInitialFilterFcCents(g[Gen.initialFilterFc]),
+            initialFilterFcCents: spec ? max(1500, min(13500, g[Gen.initialFilterFc] ?? 13500))
+                : Self.sanitizeInitialFilterFcCents(g[Gen.initialFilterFc]),
             initialFilterQCb: g[Gen.initialFilterQ] ?? 0,
             modEnvToFilterFcCents: g[Gen.modEnvToFilterFc] ?? 0,
             modLfoToFilterFcCents: g[Gen.modLfoToFilterFc] ?? 0,
@@ -379,6 +480,15 @@ public final class SF2SoundFont: @unchecked Sendable {
             vibLfoFreqCents: g[Gen.freqVibLFO] ?? 0,
             vibLfoToPitchCents: g[Gen.vibLfoToPitch] ?? 0,
             exclusiveClass: g[Gen.exclusiveClass] ?? 0)
+        if spec {
+            region.modEnvToPitchCents = g[Gen.modEnvToPitch] ?? 0
+            region.modLfoToVolumeCb = g[Gen.modLfoToVolume] ?? 0
+            region.keynumToVolEnvHold = g[Gen.keynumToVolEnvHold] ?? 0
+            region.keynumToVolEnvDecay = g[Gen.keynumToVolEnvDecay] ?? 0
+            region.keynumToModEnvHold = g[Gen.keynumToModEnvHold] ?? 0
+            region.keynumToModEnvDecay = g[Gen.keynumToModEnvDecay] ?? 0
+            region.initialFilterQCb = max(0, min(960, region.initialFilterQCb))
+        }
         if !(region.sample.loopEnd > region.sample.loopStart + 1) {
             region.sampleModes = 0
             region.sample.loopStart = 0

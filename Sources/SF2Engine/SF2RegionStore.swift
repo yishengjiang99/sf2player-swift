@@ -20,6 +20,11 @@ struct VoiceRegion {
     var modLfoDelayTc: Int, modLfoFreqCents: Int, modLfoToPitchCents: Int
     var vibLfoDelayTc: Int, vibLfoFreqCents: Int, vibLfoToPitchCents: Int
     var exclusiveClass: Int
+    var initialFilterQCb: Int
+    var modEnvToPitchCents: Int, modLfoToVolumeCb: Int
+    var keynumToVolEnvHold: Int, keynumToVolEnvDecay: Int, keynumToModEnvHold: Int, keynumToModEnvDecay: Int
+    /// Range in the store's modulator array (the defaults when the region has no list).
+    var modStart = 0, modCount = 0
 
     init(_ r: SF2Region) {
         keyLo = r.keyRange.0; keyHi = r.keyRange.1; velLo = r.velRange.0; velHi = r.velRange.1
@@ -38,6 +43,10 @@ struct VoiceRegion {
         modLfoDelayTc = r.modLfoDelayTc; modLfoFreqCents = r.modLfoFreqCents; modLfoToPitchCents = r.modLfoToPitchCents
         vibLfoDelayTc = r.vibLfoDelayTc; vibLfoFreqCents = r.vibLfoFreqCents; vibLfoToPitchCents = r.vibLfoToPitchCents
         exclusiveClass = r.exclusiveClass
+        initialFilterQCb = r.initialFilterQCb
+        modEnvToPitchCents = r.modEnvToPitchCents; modLfoToVolumeCb = r.modLfoToVolumeCb
+        keynumToVolEnvHold = r.keynumToVolEnvHold; keynumToVolEnvDecay = r.keynumToVolEnvDecay
+        keynumToModEnvHold = r.keynumToModEnvHold; keynumToModEnvDecay = r.keynumToModEnvDecay
     }
 }
 
@@ -52,6 +61,8 @@ public final class SF2RegionStore: @unchecked Sendable {
         var regionCount = 0, regionCapacity = 0
         var lists: UnsafeMutablePointer<ListRange>?
         var listCount = 0, listCapacity = 0
+        var mods: UnsafeMutablePointer<SF2Modulator>?
+        var modCount = 0, modCapacity = 0
     }
 
     public let hdr: UnsafeMutablePointer<Header>
@@ -61,11 +72,30 @@ public final class SF2RegionStore: @unchecked Sendable {
     public init() {
         hdr = .allocate(capacity: 1)
         hdr.initialize(to: Header())
+        appendMods(SF2Modulator.defaults)
+    }
+
+    /// Appends modulators; returns their start index.
+    @discardableResult
+    private func appendMods(_ mods: [SF2Modulator]) -> Int {
+        var h = hdr.pointee
+        if h.modCount + mods.count > h.modCapacity {
+            let cap = max(64, max(h.modCount + mods.count, h.modCapacity * 2))
+            let p = UnsafeMutablePointer<SF2Modulator>.allocate(capacity: cap)
+            if let old = h.mods { p.moveInitialize(from: old, count: h.modCount); old.deallocate() }
+            h.mods = p; h.modCapacity = cap
+        }
+        let start = h.modCount
+        for (i, m) in mods.enumerated() { (h.mods! + start + i).initialize(to: m) }
+        h.modCount += mods.count
+        hdr.pointee = h
+        return start
     }
 
     deinit {
         hdr.pointee.regions?.deallocate()
         hdr.pointee.lists?.deallocate()
+        hdr.pointee.mods?.deallocate()
         hdr.deallocate()
     }
 
@@ -75,6 +105,10 @@ public final class SF2RegionStore: @unchecked Sendable {
     @discardableResult
     public func add(_ list: SF2RegionList) -> Int32 {
         if let id = ids[ObjectIdentifier(list)] { return id }
+        let modRanges: [(Int, Int)] = list.regions.map { r in
+            guard let m = r.modulators else { return (0, SF2Modulator.defaults.count) }
+            return (m.isEmpty ? 0 : appendMods(m), m.count)
+        }
         var h = hdr.pointee
         if h.regionCount + list.count > h.regionCapacity {
             let cap = max(64, max(h.regionCount + list.count, h.regionCapacity * 2))
@@ -88,7 +122,11 @@ public final class SF2RegionStore: @unchecked Sendable {
             if let old = h.lists { p.moveInitialize(from: old, count: h.listCount); old.deallocate() }
             h.lists = p; h.listCapacity = cap
         }
-        for (i, r) in list.regions.enumerated() { (h.regions! + h.regionCount + i).initialize(to: VoiceRegion(r)) }
+        for (i, r) in list.regions.enumerated() {
+            var vr = VoiceRegion(r)
+            vr.modStart = modRanges[i].0; vr.modCount = modRanges[i].1
+            (h.regions! + h.regionCount + i).initialize(to: vr)
+        }
         (h.lists! + h.listCount).initialize(to: ListRange(start: h.regionCount, count: list.count))
         let id = Int32(h.listCount)
         h.regionCount += list.count

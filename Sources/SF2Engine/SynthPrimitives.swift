@@ -198,6 +198,8 @@ struct LFO {
     var phase = 0.0
     var freqHz = 5.0
     var delayLeft = 0.0
+    /// SF2 spec LFOs are triangles (gbk: sine).
+    var triangle = false
 
     init(sr: Double) { self.sr = sr }
 
@@ -213,6 +215,10 @@ struct LFO {
         }
         phase += (2 * Double.pi * freqHz) / sr
         if phase > 2 * Double.pi { phase -= 2 * Double.pi }
+        if triangle {
+            let p = phase / (2 * Double.pi)
+            return p < 0.25 ? 4 * p : (p < 0.75 ? 2 - 4 * p : 4 * p - 4)
+        }
         return sin(phase)
     }
 }
@@ -221,12 +227,13 @@ struct TwoPoleLPF {
     var sr: Double
     var z1L = 0.0, z2L = 0.0, z1R = 0.0, z2R = 0.0
     var b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0
+    /// Resonance (gbk: fixed Butterworth 0.7071).
+    var q = 0.7071
 
     init(sr: Double) { self.sr = sr }
 
     @inline(__always) mutating func setCutoffHz(_ hz: Double) {
         let clamped = max(5, min(hz, sr * 0.45))
-        let q = 0.7071
         let w0 = (2 * Double.pi * clamped) / sr
         let cosw0 = cos(w0)
         let sinw0 = sin(w0)

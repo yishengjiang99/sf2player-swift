@@ -91,6 +91,13 @@ public struct SF2Region: Equatable, @unchecked Sendable {
     public var vibLfoFreqCents: Int
     public var vibLfoToPitchCents: Int
     public var exclusiveClass: Int
+    // SF2Fidelity.spec only (zero / nil in gbk-built regions):
+    public var modEnvToPitchCents = 0
+    public var modLfoToVolumeCb = 0
+    public var keynumToVolEnvHold = 0, keynumToVolEnvDecay = 0
+    public var keynumToModEnvHold = 0, keynumToModEnvDecay = 0
+    /// Final modulator list (defaults + instrument + preset, section 9.5); nil = engine defaults.
+    public var modulators: [SF2Modulator]?
 
     public init(keyRange: (Int, Int) = (0, 127), velRange: (Int, Int) = (0, 127), sample: SF2SampleData, sampleModes: Int = 0,
                 originalKey: Int = 60, overridingRootKey: Int? = nil, coarseTune: Int = 0, fineTune: Int = 0, scaleTuning: Int = 100,
@@ -119,6 +126,10 @@ public struct SF2Region: Equatable, @unchecked Sendable {
             && a.modLfoFreqCents == b.modLfoFreqCents && a.modLfoToPitchCents == b.modLfoToPitchCents
             && a.vibLfoDelayTc == b.vibLfoDelayTc && a.vibLfoFreqCents == b.vibLfoFreqCents
             && a.vibLfoToPitchCents == b.vibLfoToPitchCents && a.exclusiveClass == b.exclusiveClass
+            && a.modEnvToPitchCents == b.modEnvToPitchCents && a.modLfoToVolumeCb == b.modLfoToVolumeCb
+            && a.keynumToVolEnvHold == b.keynumToVolEnvHold && a.keynumToVolEnvDecay == b.keynumToVolEnvDecay
+            && a.keynumToModEnvHold == b.keynumToModEnvHold && a.keynumToModEnvDecay == b.keynumToModEnvDecay
+            && a.modulators == b.modulators
     }
 }
 
