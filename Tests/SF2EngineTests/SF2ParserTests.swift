@@ -69,7 +69,8 @@ final class SF2ParserTests: XCTestCase {
     /// One sample (ramp peaking at 16384), one instrument with a global zone, one preset with a global zone.
     private func basicBank() -> SF2Builder {
         var b = SF2Builder()
-        b.samples = (0 ..< 200).map { Int16(($0 - 100) * 16384 / 100) } + [Int16](repeating: 0, count: 46)
+        let ramp: [Int16] = (0 ..< 200).map { (i: Int) -> Int16 in Int16((i - 100) * 16384 / 100) }
+        b.samples = ramp + [Int16](repeating: 0, count: 46)
         b.sampleHeaders = [.init(name: "ramp", start: 0, end: 200, loopStart: 50, loopEnd: 150, pitch: 62, corr: -7)]
         b.instruments = [("inst", [
             .init(gens: [(Gen.coarseTune, 1), (Gen.pan, -100), (Gen.attackVolEnv, -1200)]),                // global
