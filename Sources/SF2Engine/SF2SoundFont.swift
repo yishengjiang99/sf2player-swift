@@ -15,6 +15,8 @@ public enum SF2Error: Error, Equatable {
     case missingSampleData
     case presetIndexOutOfRange(Int)
     case instrumentIndexOutOfRange(Int)
+    /// SoundFont 2.01 section 10.1 structural error (strict loading).
+    case structural(SF2StructuralError)
 }
 
 public struct SF2SampleHeader: Equatable, Sendable {
@@ -80,6 +82,13 @@ public final class SF2SoundFont: @unchecked Sendable {
     /// Optional `sm24` low bytes (parsed, unused, like gbk).
     public let sm24: [UInt8]?
     public let riffSize: Int
+    /// `ifil` (nil when absent or malformed; lenient loads only).
+    public let version: SF2SpecVersion?
+    /// Version used for version-aware rules (`version`, else 2.01).
+    public let specVersion: SF2SpecVersion
+    /// Structural problems found while loading (section 10.1). Empty for strict loads.
+    public let warnings: [SF2StructuralError]
+    public let loadOptions: SF2LoadOptions
     /// pdta tables, terminal records (EOP/EOI/EOS) included.
     public let phdr: [SF2PresetHeader]
     public let pbag: [SF2Bag]
@@ -100,38 +109,55 @@ public final class SF2SoundFont: @unchecked Sendable {
     public var presets: ArraySlice<SF2PresetHeader> { phdr.dropLast() }
 
     /// Reads and parses the file on a background task (never on the caller's thread).
-    public static func load(contentsOf url: URL) async throws -> SF2SoundFont {
+    public static func load(contentsOf url: URL, options: SF2LoadOptions = .lenient) async throws -> SF2SoundFont {
         try await Task.detached(priority: .userInitiated) {
             let data = try Data(contentsOf: url, options: .mappedIfSafe)
-            return try SF2SoundFont(data: data)
+            return try SF2SoundFont(data: data, options: options)
         }.value
     }
 
-    public convenience init(contentsOf url: URL) throws {
-        try self.init(data: try Data(contentsOf: url, options: .mappedIfSafe))
+    public convenience init(contentsOf url: URL, options: SF2LoadOptions = .lenient) throws {
+        try self.init(data: try Data(contentsOf: url, options: .mappedIfSafe), options: options)
     }
 
-    public init(data: Data) throws {
+    public convenience init(data: Data) throws {
+        try self.init(data: data, options: .lenient)
+    }
+
+    /// Parses `data`. `.lenient` (the default, and what `.gbk` callers use) keeps the historical
+    /// behavior and records structural problems in `warnings`; `.strict` throws
+    /// `SF2Error.structural(...)` for the first SoundFont 2.01 section 10.1 violation.
+    public init(data: Data, options: SF2LoadOptions) throws {
         var info: [String: String] = [:]
+        var rawInfo: [(String, [UInt8])] = []
         var smpl: [Int16]?
         var sm24: [UInt8]?
         var phdr: [SF2PresetHeader] = [], pbag: [SF2Bag] = [], pmod: [SF2ModRecord] = [], pgen: [SF2GenRecord] = []
         var inst: [SF2InstrumentHeader] = [], ibag: [SF2Bag] = [], imod: [SF2ModRecord] = [], igen: [SF2GenRecord] = []
         var shdr: [SF2SampleHeader] = []
         var riffSize = 0
+        var issues: [SF2StructuralError] = []
+        var topOrder: [String] = [], pdtaOrder: [String] = []
+        var smplBytes = 0
 
-        try data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+        do { try data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
             var r = ByteReader(raw)
             guard try r.fourCC() == "RIFF" else { throw SF2Error.notRIFF }
             riffSize = Int(try r.u32())
             guard try r.fourCC() == "sfbk" else { throw SF2Error.notSoundFont }
+            // P-01: the RIFF size covers the file (one trailing pad byte allowed).
+            if !(riffSize + 8 == raw.count || (riffSize % 2 == 1 && riffSize + 9 == raw.count)) {
+                issues.append(.riffSize(declared: riffSize, actual: raw.count - 8))
+            }
 
             while !r.eof {
                 let id = try r.fourCC()
                 let size = Int(try r.u32())
                 let chunkStart = r.pos
+                if chunkStart + size > raw.count { issues.append(.truncatedChunk(id)) }
                 if id == "LIST" {
                     let listType = try r.fourCC()
+                    topOrder.append(listType)
                     let listEnd = min(chunkStart + size, raw.count)
                     switch listType {
                     case "INFO":
@@ -139,7 +165,9 @@ public final class SF2SoundFont: @unchecked Sendable {
                             let sid = try r.fourCC()
                             let ssize = Int(try r.u32())
                             let start = r.pos
+                            if start + ssize > listEnd { issues.append(.truncatedChunk(sid)) }
                             let bytes = try r.bytes(ssize)
+                            rawInfo.append((sid, Array(bytes)))
                             var s = String(decoding: bytes, as: UTF8.self)
                             if s.contains("\u{FFFD}") { s = String(bytes.map { Character(Unicode.Scalar($0)) }) }
                             while s.hasSuffix("\0") { s.removeLast() }
@@ -151,7 +179,10 @@ public final class SF2SoundFont: @unchecked Sendable {
                             let sid = try r.fourCC()
                             let ssize = Int(try r.u32())
                             let start = r.pos
+                            if start + ssize > listEnd { issues.append(.truncatedChunk(sid)) }
                             if sid == "smpl" {
+                                smplBytes = ssize
+                                if ssize % 2 != 0 { issues.append(.oddSampleByteCount(ssize)) }
                                 let n = ssize / 2
                                 try r.need(n * 2, "smpl")
                                 var out = [Int16](repeating: 0, count: n)
@@ -164,6 +195,8 @@ public final class SF2SoundFont: @unchecked Sendable {
                                 smpl = out
                             } else if sid == "sm24" {
                                 sm24 = Array(try r.bytes(ssize))
+                            } else {
+                                issues.append(.unknownChunk(sid, in: "sdta"))
                             }
                             r.pos = align2(start + ssize)
                         }
@@ -172,7 +205,10 @@ public final class SF2SoundFont: @unchecked Sendable {
                             let sid = try r.fourCC()
                             let ssize = Int(try r.u32())
                             let start = r.pos
+                            pdtaOrder.append(sid)
+                            if start + ssize > listEnd { issues.append(.truncatedChunk(sid)) }
                             try r.need(ssize, sid)
+                            if let rec = Self.recordSizes[sid], ssize % rec != 0 { issues.append(.recordSize(sid, ssize)) }
                             switch sid {
                             case "phdr":
                                 phdr = try (0 ..< ssize / 38).map { _ in
@@ -198,32 +234,56 @@ public final class SF2SoundFont: @unchecked Sendable {
                                         originalPitch: Int(try r.u8()), pitchCorrection: Int(Int8(bitPattern: try r.u8())),
                                         sampleLink: Int(try r.u16()), sampleType: Int(try r.u16()))
                                 }
-                            default: break
+                            default: issues.append(.unknownChunk(sid, in: "pdta"))
                             }
                             r.pos = align2(start + ssize)
                         }
                     default:
+                        issues.append(.unknownChunk(listType, in: "RIFF"))
                         r.pos = listEnd
                     }
                     r.pos = align2(r.pos)
                 } else {
+                    topOrder.append(id)
+                    issues.append(.unknownChunk(id, in: "RIFF"))
                     r.pos = align2(chunkStart + size)
                 }
             }
+        } } catch SF2Error.truncated(let what) where options.mode == .strict {
+            throw SF2Error.structural(.truncatedChunk(what))
         }
 
-        let tables: [(String, Int)] = [("phdr", phdr.count), ("pbag", pbag.count), ("pgen", pgen.count), ("inst", inst.count),
-                                       ("ibag", ibag.count), ("igen", igen.count), ("shdr", shdr.count)]
-        for (name, count) in tables where count == 0 { throw SF2Error.missingTable(name) }
+        let strict = options.mode == .strict
+        let infoResult = SF2InfoParser.parse(rawInfo)
+        issues += infoResult.issues
+        issues += SF2Validator.validate(topOrder: topOrder, pdtaOrder: pdtaOrder, phdr: phdr, pbag: pbag, pmod: pmod,
+                                        pgen: pgen, inst: inst, ibag: ibag, imod: imod, igen: igen, shdr: shdr,
+                                        sampleCount: smpl?.count ?? 0, hasIROM: infoResult.info["irom"] != nil)
+        if strict, let first = issues.first { throw SF2Error.structural(first) }
 
-        self.info = info
+        if !strict {
+            let tables: [(String, Int)] = [("phdr", phdr.count), ("pbag", pbag.count), ("pgen", pgen.count), ("inst", inst.count),
+                                           ("ibag", ibag.count), ("igen", igen.count), ("shdr", shdr.count)]
+            for (name, count) in tables where count == 0 { throw SF2Error.missingTable(name) }
+        }
+
+        self.info = strict ? infoResult.info : info
+        self.version = infoResult.version
+        self.specVersion = infoResult.version ?? SF2SpecVersion(major: 2, minor: 1)
+        self.warnings = issues
+        self.loadOptions = options
         self.samples = smpl ?? []
+        // 2.04 feature: sm24 is only meaningful for ifil >= 2.04 (P-07).
         self.sm24 = sm24
         self.riffSize = riffSize
         self.phdr = phdr; self.pbag = pbag; self.pmod = pmod; self.pgen = pgen
         self.inst = inst; self.ibag = ibag; self.imod = imod; self.igen = igen; self.shdr = shdr
-        if smpl == nil { throw SF2Error.missingSampleData }
+        _ = smplBytes
+        if smpl == nil, !strict { throw SF2Error.missingSampleData }
     }
+
+    static let recordSizes: [String: Int] = ["phdr": 38, "pbag": 4, "pmod": 10, "pgen": 4, "inst": 22, "ibag": 4,
+                                             "imod": 10, "igen": 4, "shdr": 46]
 
     private static func readBags(_ r: inout ByteReader, _ size: Int) throws -> [SF2Bag] {
         try (0 ..< size / 4).map { _ in SF2Bag(genNdx: Int(try r.u16()), modNdx: Int(try r.u16())) }
@@ -241,12 +301,21 @@ public final class SF2SoundFont: @unchecked Sendable {
     // MARK: - Presets
 
     /// gbk `resolvePresetIndex`: exact (program, bank), then bank 0, then any bank; nil if none.
+    /// Bank 0 and any-bank fallbacks are engine policy, not SoundFont 2.01. Presets with
+    /// `wPreset > 127` or `wBank > 128` are never playable (Z-12, section 7.2).
     public func resolvePresetIndex(program: Int, bank: Int) -> Int? {
         let p = presets
-        if let i = p.firstIndex(where: { $0.preset == program && $0.bank == bank }) { return i }
-        if let i = p.firstIndex(where: { $0.preset == program && $0.bank == 0 }) { return i }
-        if let i = p.firstIndex(where: { $0.preset == program }) { return i }
+        func ok(_ h: SF2PresetHeader) -> Bool { h.preset <= 127 && h.bank <= 128 }
+        if let i = p.firstIndex(where: { ok($0) && $0.preset == program && $0.bank == bank }) { return i }
+        if let i = p.firstIndex(where: { ok($0) && $0.preset == program && $0.bank == 0 }) { return i }
+        if let i = p.firstIndex(where: { ok($0) && $0.preset == program }) { return i }
         return nil
+    }
+
+    /// Section 7.2: `wPreset` 0...127 and `wBank` 0...128.
+    public func isPlayable(_ index: Int) -> Bool {
+        guard index >= 0, index < phdr.count - 1 else { return false }
+        return phdr[index].preset <= 127 && phdr[index].bank <= 128
     }
 
     /// gbk `presetOptions` name: `presetName || "(unnamed)"`.
@@ -257,12 +326,13 @@ public final class SF2SoundFont: @unchecked Sendable {
     }
 
     /// Cached `buildRegionsForPreset(index, {decodeToFloat32, normalize, includeStereoLinks: true})`.
-    /// `.spec` builds SoundFont 2.04 regions (zone override rules, modulators); `.gbk` is gbk's merge.
+    /// `.spec` builds SoundFont 2.01 regions (zone override rules, range clamping, modulators); `.gbk` is gbk's merge.
     public func regionList(forPreset index: Int, fidelity: SF2Fidelity = .gbk) throws -> SF2RegionList {
         cacheLock.lock()
         if let hit = (fidelity == .spec ? specRegionCache : regionCache)[index] { cacheLock.unlock(); return hit }
         cacheLock.unlock()
-        let list = SF2RegionList(try buildRegionsForPreset(index, fidelity: fidelity))
+        // S-01: `.spec` uses raw sample levels (value / 32768); `.gbk` peak-normalizes per region.
+        let list = SF2RegionList(try buildRegionsForPreset(index, normalize: fidelity != .spec, fidelity: fidelity))
         cacheLock.lock(); defer { cacheLock.unlock() }
         if fidelity == .spec {
             if let hit = specRegionCache[index] { return hit }
@@ -331,7 +401,7 @@ public final class SF2SoundFont: @unchecked Sendable {
         return out
     }
 
-    // MARK: - SoundFont 2.04 build (SF2Fidelity.spec)
+    // MARK: - SoundFont 2.01 build (SF2Fidelity.spec)
 
     /// Generators a preset zone may not set (8.1.2/8.1.3: sample offsets, ids, sampleModes, ...).
     static let instrumentOnlyGens: Set<Int> = [Gen.startAddrsOffset, Gen.endAddrsOffset, Gen.startloopAddrsOffset,
@@ -358,45 +428,130 @@ public final class SF2SoundFont: @unchecked Sendable {
         return lo > hi ? nil : (lo | hi << 8)
     }
 
-    /// 9.4: local generators replace global ones at each level; preset values add to instrument values
-    /// (ranges intersect); 9.5 modulator merge.
-    private func buildSpecRegions(_ presetIndex: Int, normalize: Bool, includeStereoLinks: Bool) throws -> [SF2Region] {
+    struct SpecZone { var gens: [Int: Int]; var mods: [SF2Modulator] }
+    struct SpecObject { var global: SpecZone?; var locals: [SpecZone] }
+
+    /// Section 7.3/7.5/7.7/7.9 zone rules for one preset or instrument: Z-01 global detection by the
+    /// terminal generator, Z-02 nothing after the terminal, Z-03 range positions, Z-04 last wins,
+    /// Z-05 incomplete zones dropped, Z-06/Z-07/Z-08 illegal, instrument-only and reserved ids dropped.
+    func specObject(bags: [SF2Bag], gens: [SF2GenRecord], mods: [SF2ModRecord], from: Int, to: Int, preset: Bool) -> SpecObject {
+        let terminal = preset ? Gen.instrument : Gen.sampleID
+        let illegal = preset ? Gen.sampleID : Gen.instrument
+        var raw: [(SpecZone, Bool)] = []
+        var bi = max(0, from)
+        while bi < min(to, bags.count) {
+            let gs = min(bags[bi].genNdx, gens.count)
+            let ge = max(gs, min(bi + 1 < bags.count ? bags[bi + 1].genNdx : gens.count, gens.count))
+            var z: [Int: Int] = [:]
+            var terminated = false
+            for gi in gs ..< ge {
+                let rec = gens[gi], op = rec.oper, idx = gi - gs
+                guard let info = GenInfo.get(op), op != illegal else { continue }
+                if preset && info.instrumentOnly { continue }
+                if op == Gen.keyRange && idx != 0 { continue }
+                if op == Gen.velRange && !(idx == 0 || (idx == 1 && gens[gs].oper == Gen.keyRange)) { continue }
+                let unsigned = info.kind == .index || info.kind == .range
+                z[op] = unsigned ? Int(UInt16(truncatingIfNeeded: rec.amount)) : rec.amount
+                if op == terminal { terminated = true; break }
+            }
+            let ms = min(bags[bi].modNdx, mods.count)
+            let me = max(ms, min(bi + 1 < bags.count ? bags[bi + 1].modNdx : mods.count, mods.count))
+            var zm: [SF2Modulator] = []
+            for mi in ms ..< me {
+                let m = SF2Modulator(mods[mi])
+                if let i = zm.firstIndex(where: { $0.sameIdentity(m) }) { zm[i] = m } else { zm.append(m) }
+            }
+            raw.append((SpecZone(gens: z, mods: zm), terminated))
+            bi += 1
+        }
+        var obj = SpecObject(global: nil, locals: [])
+        for (i, (z, terminated)) in raw.enumerated() {
+            if terminated { obj.locals.append(z) }
+            else if i == 0 && raw.count > 1 && !(z.gens.isEmpty && z.mods.isEmpty) { obj.global = z }
+        }
+        return obj
+    }
+
+    /// Fully merged `.spec` zones of a preset: generators (section 9.4, clamped per 10.5) and modulators (9.5).
+    func specMergedZones(_ presetIndex: Int) throws -> [SpecZone] {
         let last = phdr.count - 1
         guard presetIndex >= 0, presetIndex < last else { throw SF2Error.presetIndexOutOfRange(presetIndex) }
-        let pFrom = phdr[presetIndex].presetBagNdx, pTo = phdr[presetIndex + 1].presetBagNdx
-        let presetZones = zones(bags: pbag, gens: pgen, from: pFrom, to: pTo)
-        let presetMods = zoneMods(bags: pbag, mods: pmod, from: pFrom, to: pTo)
-        let hasPresetGlobal = !presetZones.isEmpty && presetZones[0][Gen.instrument] == nil
-        var regions: [SF2Region] = []
-        for (pi, pz) in presetZones.enumerated() {
-            guard let instIndex = pz[Gen.instrument] else { continue }
+        let p = specObject(bags: pbag, gens: pgen, mods: pmod, from: phdr[presetIndex].presetBagNdx,
+                           to: phdr[presetIndex + 1].presetBagNdx, preset: true)
+        var out: [SpecZone] = []
+        for pz in p.locals {
+            guard let instIndex = pz.gens[Gen.instrument] else { continue }
             guard instIndex >= 0, instIndex < inst.count - 1 else { throw SF2Error.instrumentIndexOutOfRange(instIndex) }
-            var pg = hasPresetGlobal ? presetZones[0] : [:]
-            for (k, v) in pz { pg[k] = v }
-            let iFrom = inst[instIndex].instBagNdx, iTo = inst[instIndex + 1].instBagNdx
-            let instZones = zones(bags: ibag, gens: igen, from: iFrom, to: iTo)
-            let instMods = zoneMods(bags: ibag, mods: imod, from: iFrom, to: iTo)
-            let hasInstGlobal = !instZones.isEmpty && instZones[0][Gen.sampleID] == nil
-            for (ii, iz) in instZones.enumerated() {
-                guard iz[Gen.sampleID] != nil else { continue }
-                var g = hasInstGlobal ? instZones[0] : [:]
-                for (k, v) in iz { g[k] = v }
+            var pg = p.global?.gens ?? [:]
+            for (k, v) in pz.gens { pg[k] = v }
+            pg[Gen.instrument] = nil
+            let io = specObject(bags: ibag, gens: igen, mods: imod, from: inst[instIndex].instBagNdx,
+                                to: inst[instIndex + 1].instBagNdx, preset: false)
+            var batch: [SpecZone] = []
+            for iz in io.locals {
+                var g = io.global?.gens ?? [:]
+                for (k, v) in iz.gens { g[k] = v }
                 var empty = false
-                for (k, v) in pg where !Self.instrumentOnlyGens.contains(k) {
+                for (k, v) in pg {
                     if k == Gen.keyRange || k == Gen.velRange {
                         if let r = Self.intersectRange(g[k], v) { g[k] = r } else { empty = true }
                     } else {
-                        g[k] = (g[k] ?? Self.genDefault(k)) + v
+                        g[k] = (g[k] ?? GenInfo.defaultValue(k)) + v
                     }
                 }
                 if empty { continue }
-                guard var region = makeRegion(g, normalize: normalize, includeStereoLinks: includeStereoLinks, spec: true)
-                else { continue }
-                region.modulators = SF2Modulator.merge(
-                    instGlobal: hasInstGlobal ? instMods[0] : [], instLocal: instMods[ii],
-                    presetGlobal: hasPresetGlobal ? presetMods[0] : [], presetLocal: presetMods[pi])
-                regions.append(region)
+                for (k, v) in g { g[k] = GenInfo.clamp(k, v) }
+                let mods = SF2Modulator.merge(instGlobal: io.global?.mods ?? [], instLocal: iz.mods,
+                                              presetGlobal: p.global?.mods ?? [], presetLocal: pz.mods,
+                                              version: specVersion)
+                batch.append(SpecZone(gens: g, mods: mods))
             }
+            out += linkStereoPitch(batch)
+        }
+        return out
+    }
+
+    /// S-10 (7.10): a valid stereo pair (left type 4 <-> right type 2, links pointing at each other,
+    /// same rate, both used by zones of the same instrument) plays as two voices, each zone its own
+    /// sample and pan, both with the pitch of the right sample's zone. Invalid links play mono.
+    func linkStereoPitch(_ zones: [SpecZone]) -> [SpecZone] {
+        var out = zones
+        let n = shdr.count - 1
+        for i in out.indices {
+            guard let sid = out[i].gens[Gen.sampleID], sid >= 0, sid < n else { continue }
+            let l = shdr[sid]
+            guard l.sampleType & 0x7FFF == 4, l.sampleLink >= 0, l.sampleLink < n else { continue }
+            let r = shdr[l.sampleLink]
+            guard r.sampleType & 0x7FFF == 2, r.sampleLink == sid, r.sampleRate == l.sampleRate else { continue }
+            guard let j = zones.firstIndex(where: { z in
+                z.gens[Gen.sampleID] == l.sampleLink
+                    && Self.intersectRange(z.gens[Gen.keyRange] ?? 0x7F00, out[i].gens[Gen.keyRange] ?? 0x7F00) != nil
+                    && Self.intersectRange(z.gens[Gen.velRange] ?? 0x7F00, out[i].gens[Gen.velRange] ?? 0x7F00) != nil
+            }) else { continue }
+            let rz = zones[j].gens
+            for k in [Gen.coarseTune, Gen.scaleTuning] { out[i].gens[k] = rz[k] }
+            // Root key and correction of the right sample (makeRegion adds the left sample's correction).
+            let rRoot = rz[Gen.overridingRootKey].flatMap { (0 ... 127).contains($0) ? $0 : nil } ?? (r.originalPitch > 127 ? 60 : r.originalPitch)
+            out[i].gens[Gen.overridingRootKey] = rRoot
+            out[i].gens[Gen.fineTune] = (rz[Gen.fineTune] ?? 0) + r.pitchCorrection - l.pitchCorrection
+        }
+        return out
+    }
+
+    /// Merged `.spec` generator maps of a preset (one per sounding zone), for inspection and tests.
+    public func specMergedGenerators(_ presetIndex: Int) throws -> [[Int: Int]] {
+        try specMergedZones(presetIndex).map(\.gens)
+    }
+
+    /// 9.4: local generators replace global ones at each level; preset values add to instrument values
+    /// (ranges intersect); 9.5 modulator merge.
+    private func buildSpecRegions(_ presetIndex: Int, normalize: Bool, includeStereoLinks: Bool) throws -> [SF2Region] {
+        var regions: [SF2Region] = []
+        for z in try specMergedZones(presetIndex) {
+            guard var region = makeRegion(z.gens, normalize: normalize, includeStereoLinks: includeStereoLinks, spec: true)
+            else { continue }
+            region.modulators = z.mods
+            regions.append(region)
         }
         return regions
     }
@@ -423,18 +578,32 @@ public final class SF2SoundFont: @unchecked Sendable {
 
     private func makeRegion(_ g: [Int: Int], normalize: Bool, includeStereoLinks: Bool, spec: Bool = false) -> SF2Region? {
         guard let sampleID = g[Gen.sampleID], sampleID >= 0, sampleID < shdr.count else { return nil }
+        // P-12/P-13 (spec): the terminal EOS is never played. P-06: no ROM in this engine, so ROM
+        // samples (sfSampleType bit 15) never sound and smpl is never read at their offsets.
+        if spec && (sampleID >= shdr.count - 1 || shdr[sampleID].sampleType & 0x8000 != 0) { return nil }
         let sh = shdr[sampleID]
         let n = samples.count
         func offset(_ fine: Int, _ coarse: Int) -> Int { (g[fine] ?? 0) + (g[coarse] ?? 0) * 32768 }
-        let start = clampU32(sh.start + offset(Gen.startAddrsOffset, Gen.startAddrsCoarseOffset), 0, n)
-        let end = clampU32(sh.end + offset(Gen.endAddrsOffset, Gen.endAddrsCoarseOffset), 0, n)
-        let loopStart = clampU32(sh.startLoop + offset(Gen.startloopAddrsOffset, Gen.startloopAddrsCoarseOffset), 0, n)
-        let loopEnd = clampU32(sh.endLoop + offset(Gen.endloopAddrsOffset, Gen.endloopAddrsCoarseOffset), 0, n)
+        var start = clampU32(sh.start + offset(Gen.startAddrsOffset, Gen.startAddrsCoarseOffset), 0, n)
+        var end = clampU32(sh.end + offset(Gen.endAddrsOffset, Gen.endAddrsCoarseOffset), 0, n)
+        var loopStart = clampU32(sh.startLoop + offset(Gen.startloopAddrsOffset, Gen.startloopAddrsCoarseOffset), 0, n)
+        var loopEnd = clampU32(sh.endLoop + offset(Gen.endloopAddrsOffset, Gen.endloopAddrsCoarseOffset), 0, n)
+        if spec {
+            // S-02: header points must lie in smpl with end > start, else the zone is silent.
+            guard sh.start >= 0, sh.end <= n, sh.end > sh.start else { return nil }
+            // S-03: signed offsets, clamped into this sample's own range keeping start < end (10.5).
+            let lo = sh.start, hi = sh.end
+            start = max(lo, min(hi - 1, sh.start + offset(Gen.startAddrsOffset, Gen.startAddrsCoarseOffset)))
+            end = max(start + 1, min(hi, sh.end + offset(Gen.endAddrsOffset, Gen.endAddrsCoarseOffset)))
+            loopStart = max(lo, min(hi, sh.startLoop + offset(Gen.startloopAddrsOffset, Gen.startloopAddrsCoarseOffset)))
+            loopEnd = max(lo, min(hi, sh.endLoop + offset(Gen.endloopAddrsOffset, Gen.endloopAddrsCoarseOffset)))
+        }
         if end <= start { return nil }
 
         let dataL = sampleBuffer(start, end, normalize: normalize)
         var dataR: SF2SampleBuffer?
-        if includeStereoLinks, sh.sampleLink != 0, sh.sampleLink < shdr.count {
+        // S-10: .spec never folds the partner into this voice (each zone is its own voice).
+        if includeStereoLinks, !spec, sh.sampleLink != 0, sh.sampleLink < shdr.count {
             let other = shdr[sh.sampleLink]
             if other.sampleRate == sh.sampleRate {
                 let sR = clampU32(other.start, 0, n), eR = clampU32(other.end, 0, n)
@@ -450,11 +619,15 @@ public final class SF2SoundFont: @unchecked Sendable {
         let len = dataL.count
         var region = SF2Region(
             keyRange: range(g[Gen.keyRange]), velRange: range(g[Gen.velRange]),
-            sample: SF2SampleData(dataL: dataL, dataR: dataR, sampleRate: sh.sampleRate, start: 0, end: len,
+            // S-04: a zero rate is illegal -> nearest practical value (400 Hz); others are kept.
+            sample: SF2SampleData(dataL: dataL, dataR: dataR, sampleRate: spec && sh.sampleRate <= 0 ? 400 : sh.sampleRate, start: 0, end: len,
                                   loopStart: max(0, min(loopStart - start, len)), loopEnd: max(0, min(loopEnd - start, len))),
-            sampleModes: g[Gen.sampleModes] ?? 0,
-            originalKey: sh.originalPitch,
-            overridingRootKey: g[Gen.overridingRootKey].map { $0 & 0xFF },
+            // S-08: only the low two bits of sampleModes are defined (spec).
+            sampleModes: spec ? (g[Gen.sampleModes] ?? 0) & 3 : g[Gen.sampleModes] ?? 0,
+            // S-05: 128...255 (255 = unpitched) -> 60. S-06: -1 / out of range -> header key.
+            originalKey: spec && sh.originalPitch > 127 ? 60 : sh.originalPitch,
+            overridingRootKey: spec ? g[Gen.overridingRootKey].flatMap { (0 ... 127).contains($0) ? $0 : nil }
+                : g[Gen.overridingRootKey].map { $0 & 0xFF },
             coarseTune: g[Gen.coarseTune] ?? 0,
             fineTune: (g[Gen.fineTune] ?? 0) + sh.pitchCorrection,
             scaleTuning: g[Gen.scaleTuning] ?? 100,
@@ -488,7 +661,15 @@ public final class SF2SoundFont: @unchecked Sendable {
             region.keynumToModEnvHold = g[Gen.keynumToModEnvHold] ?? 0
             region.keynumToModEnvDecay = g[Gen.keynumToModEnvDecay] ?? 0
             region.initialFilterQCb = max(0, min(960, region.initialFilterQCb))
+            // G-02: substitution generators, 0...127 (else ignored).
+            region.chorusSend = max(0, min(1000, g[Gen.chorusEffectsSend] ?? 0))
+            region.reverbSend = max(0, min(1000, g[Gen.reverbEffectsSend] ?? 0))
+            region.keynumOverride = g[Gen.keynum].flatMap { (0 ... 127).contains($0) ? $0 : nil }
+            region.velocityOverride = g[Gen.velocity].flatMap { (0 ... 127).contains($0) ? $0 : nil }
         }
+        // S-09 loop policy (both modes): a loop needs loopEnd - loopStart >= 2 inside the sample, else the
+        // zone plays unlooped. 7.10's 48-point / 32-point-loop / 8-guard-point recommendations are not
+        // enforced (looping such samples is allowed; "may optionally not loop").
         if !(region.sample.loopEnd > region.sample.loopStart + 1) {
             region.sampleModes = 0
             region.sample.loopStart = 0

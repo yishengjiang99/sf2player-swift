@@ -26,6 +26,12 @@ struct VolEnv {
     var delay = 0.0, attack = 0.01, hold = 0.0, decay = 0.1, sustain = 0.5, release = 0.2, releaseStart = 0.0
     // log caches (same values Math.log would produce each sample)
     var logDecayStart = 0.0, logDecayEnd = log(0.5), logReleaseStart = log(1e-5)
+    /// SoundFont 2.01 shapes (G-03, section 9.1.7): attack linear in amplitude, decay / release at a
+    /// constant dB rate (100 dB per `decay` / `release` seconds) from the current level, sustain in cB
+    /// below peak, voice ends at 96 dB attenuation. No release floor (the -12000 tc default is ~1 ms,
+    /// within section 9.7's anti-click allowance). `false` keeps the gbk curves bit for bit.
+    var spec = false
+    var sustainCb = 0.0, attCb = 0.0, releaseSec = 0.001
     static let eps = 1e-5
     static let logEps = log(1e-5)
 
@@ -40,6 +46,8 @@ struct VolEnv {
         hold = max(0, timecentsToSeconds(Double(e.holdTc)))
         decay = max(0, timecentsToSeconds(Double(e.decayTc)))
         release = max(MIN_VOL_RELEASE_SEC, timecentsToSeconds(Double(e.releaseTc)))
+        releaseSec = max(0, timecentsToSeconds(Double(e.releaseTc)))
+        sustainCb = Double(max(0, min(1440, e.sustainCb)))
         let sustainDb = -Double(e.sustainCb) / 10
         sustain = min(1, max(0, pow(10, sustainDb / 20)))
         logDecayStart = log(max(Self.eps, peak))
@@ -58,9 +66,61 @@ struct VolEnv {
         t = 0
         releaseStart = level
         logReleaseStart = log(max(Self.eps, releaseStart))
+        if spec { attCb = level > 0 ? min(960, -200 * log10(level)) : 960 }
+    }
+
+    /// Exclusive-class termination (G-12, 8.1.2 #57): release from the current level, 100 dB in `seconds`.
+    mutating func fastRelease(_ seconds: Double) {
+        if stage == .idle { return }
+        releaseSec = seconds
+        release = seconds
+        noteOff()
+    }
+
+    /// Immediate stop (CC120 all sound off).
+    mutating func kill() { stage = .idle; level = 0 }
+
+    @inline(__always) mutating func nextSpec() -> Double {
+        let dt = 1 / sr
+        switch stage {
+        case .idle:
+            level = 0
+            return 0
+        case .delay:
+            t += dt
+            if t >= delay { stage = .attack; t = 0 }
+            level = 0
+            return 0
+        case .attack:
+            t += dt
+            if attack <= 0 || t >= attack { level = 1; stage = hold > 0 ? .hold : .decay; t = 0; attCb = 0; return level }
+            level = t / attack
+            return level
+        case .hold:
+            t += dt
+            level = 1
+            if t >= hold { stage = .decay; t = 0; attCb = 0 }
+            return level
+        case .decay:
+            attCb = decay <= 0 ? sustainCb : attCb + 1000 * dt / decay
+            if attCb >= sustainCb { attCb = sustainCb; stage = .sustain }
+            if attCb >= 960 { level = 0; stage = .idle; return 0 }
+            level = pow(10, -attCb / 200)
+            return level
+        case .sustain:
+            if sustainCb >= 960 { level = 0; stage = .idle; return 0 }
+            level = pow(10, -sustainCb / 200)
+            return level
+        case .release:
+            attCb = releaseSec <= 0 ? 960 : attCb + 1000 * dt / releaseSec
+            if attCb >= 960 { level = 0; stage = .idle; return 0 }
+            level = pow(10, -attCb / 200)
+            return level
+        }
     }
 
     @inline(__always) mutating func next() -> Double {
+        if spec { return nextSpec() }
         let dt = 1 / sr
         switch stage {
         case .idle:
@@ -123,6 +183,11 @@ struct ModEnv {
     var stage: EnvStage = .idle
     var level = 0.0, t = 0.0
     var delay = 0.0, attack = 0.01, hold = 0.0, decay = 0.1, sustain = 0.0, release = 0.2, releaseStart = 0.0
+    /// SoundFont 2.01 shapes (G-04): convex attack (the volume attack seen in dB, so cents rise
+    /// "linear in Hz"), linear decay / release at full scale per `decay` / `release` seconds from the
+    /// current level, no release floor. `false` keeps the gbk curves.
+    var spec = false
+    var releaseSec = 0.001
 
     init(sr: Double) { self.sr = sr }
 
@@ -132,7 +197,41 @@ struct ModEnv {
         hold = max(0, timecentsToSeconds(Double(e.holdTc)))
         decay = max(0, timecentsToSeconds(Double(e.decayTc)))
         release = max(MIN_MOD_RELEASE_SEC, timecentsToSeconds(Double(e.releaseTc)))
+        releaseSec = max(0, timecentsToSeconds(Double(e.releaseTc)))
         sustain = min(1, max(0, e.sustain))
+    }
+
+    @inline(__always) mutating func nextSpec() -> Double {
+        let dt = 1 / sr
+        switch stage {
+        case .idle: level = 0; return 0
+        case .delay:
+            t += dt
+            if t >= delay { stage = .attack; t = 0 }
+            level = 0
+            return 0
+        case .attack:
+            t += dt
+            if attack <= 0 || t >= attack { level = 1; stage = hold > 0 ? .hold : .decay; t = 0; return 1 }
+            level = modCurve(2, t / attack)
+            return level
+        case .hold:
+            t += dt
+            level = 1
+            if t >= hold { stage = .decay; t = 0 }
+            return 1
+        case .decay:
+            level = decay <= 0 ? sustain : level - dt / decay
+            if level <= sustain { level = sustain; stage = .sustain }
+            return level
+        case .sustain:
+            level = sustain
+            return level
+        case .release:
+            level = releaseSec <= 0 ? 0 : level - dt / releaseSec
+            if level <= 0 { level = 0; stage = .idle }
+            return level
+        }
     }
 
     mutating func noteOn() { stage = delay > 0 ? .delay : .attack; t = 0; level = 0 }
@@ -145,6 +244,7 @@ struct ModEnv {
     }
 
     @inline(__always) mutating func next() -> Double {
+        if spec { return nextSpec() }
         let dt = 1 / sr
         switch stage {
         case .idle:

@@ -2,69 +2,6 @@
 import XCTest
 @testable import SF2Engine
 
-/// Builds tiny SF2 files in memory (so parser tests run without the 32 MB bank).
-struct SF2Builder {
-    struct Zone { var gens: [(Int, Int)] }
-    struct Sample { var name: String; var start, end, loopStart, loopEnd: Int; var rate = 44100; var pitch = 60; var corr = 0; var link = 0; var type = 1 }
-    var samples: [Int16] = []
-    var sampleHeaders: [Sample] = []
-    var instruments: [(String, [Zone])] = []
-    var presets: [(String, Int, Int, [Zone])] = []
-    var info: [(String, String)] = [("INAM", "Test Bank")]
-    var omitTable: String?
-
-    private static func le16(_ v: Int) -> [UInt8] { [UInt8(v & 255), UInt8(v >> 8 & 255)] }
-    private static func le32(_ v: Int) -> [UInt8] { [UInt8(v & 255), UInt8(v >> 8 & 255), UInt8(v >> 16 & 255), UInt8(v >> 24 & 255)] }
-    private static func name20(_ s: String) -> [UInt8] { Array((Array(s.utf8) + [UInt8](repeating: 0, count: 20)).prefix(20)) }
-    private static func chunk(_ id: String, _ body: [UInt8]) -> [UInt8] {
-        Array(id.utf8) + le32(body.count) + body + (body.count % 2 == 1 ? [0] : [])
-    }
-    private static func list(_ type: String, _ chunks: [UInt8]) -> [UInt8] { chunk("LIST", Array(type.utf8) + chunks) }
-
-    func build() -> Data {
-        var infoChunks: [UInt8] = []
-        for (k, v) in info { infoChunks += Self.chunk(k, Array(v.utf8) + [0]) }
-        var smpl: [UInt8] = []
-        for s in samples { smpl += Self.le16(Int(UInt16(bitPattern: s))) }
-        var phdr: [UInt8] = [], pbag: [UInt8] = [], pgen: [UInt8] = [], inst: [UInt8] = [], ibag: [UInt8] = [], igen: [UInt8] = []
-        var bagCount = 0, genCount = 0
-        for (name, program, bank, zones) in presets {
-            phdr += Self.name20(name) + Self.le16(program) + Self.le16(bank) + Self.le16(bagCount) + Self.le32(0) + Self.le32(0) + Self.le32(0)
-            for z in zones {
-                pbag += Self.le16(genCount) + Self.le16(0); bagCount += 1
-                for (op, amt) in z.gens { pgen += Self.le16(op) + Self.le16(Int(UInt16(bitPattern: Int16(amt)))); genCount += 1 }
-            }
-        }
-        phdr += Self.name20("EOP") + Self.le16(0) + Self.le16(0) + Self.le16(bagCount) + Self.le32(0) + Self.le32(0) + Self.le32(0)
-        pbag += Self.le16(genCount) + Self.le16(0)
-        pgen += [0, 0, 0, 0]
-        bagCount = 0; genCount = 0
-        for (name, zones) in instruments {
-            inst += Self.name20(name) + Self.le16(bagCount)
-            for z in zones {
-                ibag += Self.le16(genCount) + Self.le16(0); bagCount += 1
-                for (op, amt) in z.gens { igen += Self.le16(op) + Self.le16(Int(UInt16(bitPattern: Int16(amt)))); genCount += 1 }
-            }
-        }
-        inst += Self.name20("EOI") + Self.le16(bagCount)
-        ibag += Self.le16(genCount) + Self.le16(0)
-        igen += [0, 0, 0, 0]
-        var shdr: [UInt8] = []
-        for s in sampleHeaders {
-            shdr += Self.name20(s.name) + Self.le32(s.start) + Self.le32(s.end) + Self.le32(s.loopStart) + Self.le32(s.loopEnd) + Self.le32(s.rate)
-            shdr += [UInt8(s.pitch), UInt8(bitPattern: Int8(s.corr))] + Self.le16(s.link) + Self.le16(s.type)
-        }
-        shdr += Self.name20("EOS") + [UInt8](repeating: 0, count: 26)
-        var pdta: [UInt8] = []
-        for (id, body) in [("phdr", phdr), ("pbag", pbag), ("pmod", [UInt8](repeating: 0, count: 10)), ("pgen", pgen), ("inst", inst),
-                           ("ibag", ibag), ("imod", [UInt8](repeating: 0, count: 10)), ("igen", igen), ("shdr", shdr)] where id != omitTable {
-            pdta += Self.chunk(id, body)
-        }
-        let body = Array("sfbk".utf8) + Self.list("INFO", infoChunks) + Self.list("sdta", Self.chunk("smpl", smpl)) + Self.list("pdta", pdta)
-        return Data(Array("RIFF".utf8) + Self.le32(body.count) + body)
-    }
-}
-
 final class SF2ParserTests: XCTestCase {
     /// One sample (ramp peaking at 16384), one instrument with a global zone, one preset with a global zone.
     private func basicBank() -> SF2Builder {
