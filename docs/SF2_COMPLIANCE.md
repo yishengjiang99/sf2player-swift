@@ -60,16 +60,16 @@ every test named must exist under `Tests/`; status must be `pass`, `n/a (reason)
 | G-11 | §8.1.2 #15/#16, §9.1.5 | Reverb/chorus sends and aux buses | test_G11_effectsSends | pending |
 | G-12 | §8.1.2 #57 | exclusiveClass: fast release, same preset + channel | test_G12_exclusiveClassFastReleaseSamePresetChannel | pending |
 | G-13 | §8.1.3 | Non-real-time generators fixed at note-on | test_G13_nonRealtimeGeneratorsFixedAtNoteOn | pending |
-| M-01 | §8.2, §8.2.4 | Source word layout; type > 3 → ignore modulator | test_M01_sourceLayoutAndUnknownType | pending |
-| M-02 | §8.2.1 | Undefined general / illegal CC sources → ignore modulator | test_M02_illegalSourcesIgnored | pending |
-| M-03 | §8.2.1 | No-controller source outputs 1 | test_M03_noControllerIsOne | pending |
-| M-04 | §8.2.2–8.2.4, §9.5.3 | Source mapping (Table 2: v/128) | test_M04_sourceMappingTable | pending |
-| M-05 | §8.3 | Transform 0 only for < 2.04; 2 = abs for ≥ 2.04 | test_M05_transformVersionGated | pending |
-| M-06 | §8.1.1 | Destination must be a value generator | test_M06_destinationMustBeValueGenerator | pending |
-| M-07 | §8.4.10, §8.1.2 | Virtual pitch destination outside enumerator space; dest 59 ignored | test_M07_dest59Ignored | pending |
-| M-08 | §9.5.1 | Output = amount·src·amtSrc | test_M08_modulatorOutput | pending |
-| M-09 | §7.4, §7.8, §9.5.1 | Modulator identity and merge rules | test_M09_modulatorMergeRules | pending |
-| M-10 | §8.4 | 2.01 default modulator list (10 entries, errata resolved) | test_M10_defaultModulators201 | pending |
+| M-01 | §8.2, §8.2.4 | Source word layout; type > 3 → ignore modulator | test_M01_sourceLayoutAndUnknownType | pass |
+| M-02 | §8.2.1 | Undefined general / illegal CC sources → ignore modulator | test_M02_illegalSourcesIgnored | pass |
+| M-03 | §8.2.1 | No-controller source outputs 1 | test_M03_noControllerIsOne | pass |
+| M-04 | §8.2.2–8.2.4, §9.5.3 | Source mapping (Table 2: v/128) | test_M04_sourceMappingTable | pass |
+| M-05 | §8.3 | Transform 0 only for < 2.04; 2 = abs for ≥ 2.04 | test_M05_transformVersionGated | pass |
+| M-06 | §8.1.1 | Destination must be a value generator | test_M06_destinationMustBeValueGenerator | pass |
+| M-07 | §8.4.10, §8.1.2 | Virtual pitch destination outside enumerator space; dest 59 ignored | test_M07_dest59Ignored | pass |
+| M-08 | §9.5.1 | Output = amount·src·amtSrc | test_M08_modulatorOutput | pass |
+| M-09 | §7.4, §7.8, §9.5.1 | Modulator identity and merge rules | test_M09_modulatorMergeRules | pass |
+| M-10 | §8.4 | 2.01 default modulator list (10 entries, errata resolved) | test_M10_defaultModulators201 | pass |
 | M-11 | §8.2.1 | Channel pressure, poly pressure, key, velocity sources fed | test_M11_liveSources | pending |
 | M-12 | §10.5 | Modulated destinations re-clamped | test_M12_modulatedValuesReclamped | pending |
 | MIDI-01 | §9.2 | Note-on velocity 0 = note-off | test_MIDI01_velocityZeroIsNoteOff | pending |

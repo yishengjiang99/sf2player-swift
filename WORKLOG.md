@@ -22,3 +22,13 @@ Saved as /workspace/sf2-baseline.txt (box only; may be lost).
   unknown `isng` (incl. GeneralUser's "E-mu 10K2") to "EMU8000" per §5.2.
 - Lenient still throws `missingTable`/`missingSampleData` like before; strict allows absent smpl (§6).
 - New `SF2Error.structural` case is additive but breaks exhaustive `switch`es downstream.
+- Chunk 2: Z-01..Z-12 (specObject/specMergedZones, GenInfo table, clamp), S-01/05/06/07.
+- Chunk 3: M-01..M-10. Version-aware defaults (`SF2Modulator.defaults(for:)`: 10 entries for 2.01,
+  previous 8 for >= 2.04), modulator validity filter, virtual pitch dest moved 59 -> 64
+  (`slotCount` 65), no-controller = 1, Table 2 mapping (v/128). Removed the illegal
+  modulator->sample-offset application (M-06).
+  **Spec-path test expectations changed** (SpecFidelityTests: CC7/CC11, velocity, mod wheel,
+  offline CC7) from the /127 law to Table 2 (helper `t2Gain`); no `.gbk` expectation touched.
+  Errata decided: pitch-wheel sensitivity mapped s/127 (12700 x s/127 = 100 s cents) — Table 2
+  v/128 would give 198.4 cents at 2 semitones; bipolar max is 63/64 (b = 2u-1), Table 2 prints 127/128;
+  §8.4.1/8.4.2 prose "velocity 1 -> 127/128" vs (127-v)/128 = 126/128 — followed the formula.

@@ -621,9 +621,9 @@ public final class Sf2SynthEngine: @unchecked Sendable {
                          pitchWheelSensitivity: ch.pws, channelPressure: Int(ch.pressure))
     }
 
-    /// Sums every modulator into `d` (indexed by destination generator, 64 slots).
+    /// Sums every modulator into `d` (indexed by destination generator; `SF2Modulator.slotCount` slots).
     @inline(__always) private func evalMods(_ voice: Voice, _ d: UnsafeMutablePointer<Double>) {
-        for i in 0 ..< 64 { d[i] = 0 }
+        for i in 0 ..< SF2Modulator.slotCount { d[i] = 0 }
         guard let mods = voice.mods else { return }
         let inputs = modInputs(voice.channel, note: Int(voice.note), velocity: Int(voice.velocity))
         for k in 0 ..< voice.modCount {
@@ -670,12 +670,10 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         voice.baseRate0 = voice.baseRate
         voice.trackGain = trackGain
         voice.trackVolumeMul = trackGain
-        withUnsafeTemporaryAllocation(of: Double.self, capacity: 64) { buf in
+        withUnsafeTemporaryAllocation(of: Double.self, capacity: SF2Modulator.slotCount) { buf in
             let d = buf.baseAddress!
             evalMods(voice, d)
             // Note-on-only destinations: sample start, LFO / envelope timing, key-number scaling.
-            let startOffset = Int(d[0] + d[4] * 32768)
-            if startOffset != 0 { voice.start = max(0, min(voice.end - 1, voice.start + Double(startOffset))); voice.pos = voice.start }
             let keyDelta = Double(60 - note)
             @inline(__always) func tc(_ base: Int, _ add: Double) -> Int { Int((Double(base) + add).rounded()) }
             var ve = reg.volEnv
@@ -704,7 +702,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
     /// Re-evaluates the modulators of every sounding voice on `channel` (after a CC or pitch-wheel change).
     func updateChannelVoices(_ channel: Int) {
         let s = st
-        withUnsafeTemporaryAllocation(of: Double.self, capacity: 64) { buf in
+        withUnsafeTemporaryAllocation(of: Double.self, capacity: SF2Modulator.slotCount) { buf in
             let d = buf.baseAddress!
             for i in 0 ..< s.pointee.count {
                 let v = s.pointee.voices + Int(s.pointee.order[i])

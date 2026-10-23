@@ -29,7 +29,7 @@ final class SpecFidelityTests: XCTestCase {
                 modValue(SF2Modulator.defaults[0], ModInputs(velocity: v, key: 60, cc: p.baseAddress!, pitchWheel: 8192,
                                                              pitchWheelSensitivity: 2, channelPressure: 0))
             }
-            XCTAssertEqual(cbAttenToLin(atten), pow(Double(v) / 127, 2), accuracy: 1e-9, "v=\(v)")
+            XCTAssertEqual(cbAttenToLin(atten), t2Gain(v), accuracy: 1e-9, "v=\(v)")
         }
     }
 
@@ -71,12 +71,12 @@ final class SpecFidelityTests: XCTestCase {
         noteOn(e)
         let g0 = firstVoice(e).baseGain
         e.dispatchEvent(.controlChange(7, value: 50, trackIndex: 0, channel: 0))
-        XCTAssertEqual(firstVoice(e).baseGain / g0, pow(50.0 / 100, 2), accuracy: 1e-9)
+        XCTAssertEqual(firstVoice(e).baseGain / g0, t2Gain(50) / t2Gain(100), accuracy: 1e-9)
         e.dispatchEvent(.controlChange(11, value: 64, trackIndex: 0, channel: 0))
-        XCTAssertEqual(firstVoice(e).baseGain / g0, pow(50.0 / 100, 2) * pow(64.0 / 127, 2), accuracy: 1e-9)
+        XCTAssertEqual(firstVoice(e).baseGain / g0, t2Gain(50) / t2Gain(100) * t2Gain(64), accuracy: 1e-9)
         // Another channel is unaffected.
         e.dispatchEvent(.controlChange(7, value: 1, trackIndex: 0, channel: 3))
-        XCTAssertEqual(firstVoice(e).baseGain / g0, pow(50.0 / 100, 2) * pow(64.0 / 127, 2), accuracy: 1e-9)
+        XCTAssertEqual(firstVoice(e).baseGain / g0, t2Gain(50) / t2Gain(100) * t2Gain(64), accuracy: 1e-9)
     }
 
     func testCC10PansSoundingVoice() {
@@ -113,7 +113,7 @@ final class SpecFidelityTests: XCTestCase {
         noteOn(e)
         XCTAssertEqual(firstVoice(e).vibToPitch, 0)
         e.dispatchEvent(.controlChange(1, value: 127, trackIndex: 0, channel: 0))
-        XCTAssertEqual(firstVoice(e).vibToPitch, 50, accuracy: 1e-9)
+        XCTAssertEqual(firstVoice(e).vibToPitch, 50 * 127.0 / 128, accuracy: 1e-9)
     }
 
     func testControllersIgnoredInGbkMode() {
@@ -137,8 +137,8 @@ final class SpecFidelityTests: XCTestCase {
         let vs = (0 ..< e.st.pointee.count).map { e.st.pointee.voices[Int(e.st.pointee.order[$0])] }
         let loud = vs.first { $0.note == 60 }!, soft = vs.first { $0.note == 61 }!
         XCTAssertEqual(loud.initialFc, 13500, accuracy: 1e-9)
-        XCTAssertEqual(soft.initialFc, 13500 - 2400 * (1 - 64.0 / 127), accuracy: 1e-9)
-        XCTAssertEqual(soft.baseGain / loud.baseGain, pow(64.0 / 127, 2), accuracy: 1e-9)
+        XCTAssertEqual(soft.initialFc, 13500 - 2400 * (63.0 / 128), accuracy: 1e-9)
+        XCTAssertEqual(soft.baseGain / loud.baseGain, t2Gain(64), accuracy: 1e-9)
     }
 
     func testFilterQFromRegion() {
@@ -202,8 +202,11 @@ final class SpecOfflineTests: XCTestCase {
         let gbk = SF2OfflineRenderer.renderOfflineSequence(sampleRate: 44100, length: 400, tracks: tracks, events: events)
         let spec = SF2OfflineRenderer.renderOfflineSequence(sampleRate: 44100, length: 400, tracks: tracks, events: events,
                                                             fidelity: .spec)
-        // gbk ignores CC7 events; spec scales by (50/100)^2 after frame 100.
+        // gbk ignores CC7 events; spec scales by the Table 2 concave CC7 law after frame 100.
         XCTAssertEqual(gbk.left[50], gbk.left[300], accuracy: 1e-6)
-        XCTAssertEqual(spec.left[300] / spec.left[50], 0.25, accuracy: 1e-4)
+        XCTAssertEqual(Double(spec.left[300] / spec.left[50]), t2Gain(50) / t2Gain(100), accuracy: 1e-4)
     }
 }
+
+/// Gain of a 960 cB negative-unipolar concave modulator at 7-bit value v (section 9.5.3 Table 2: (127 - v)/128).
+func t2Gain(_ v: Int) -> Double { cbAttenToLin(960 * concave(Double(127 - v) / 128)) }
