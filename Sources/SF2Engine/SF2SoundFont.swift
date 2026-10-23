@@ -15,6 +15,8 @@ public enum SF2Error: Error, Equatable {
     case missingSampleData
     case presetIndexOutOfRange(Int)
     case instrumentIndexOutOfRange(Int)
+    /// SoundFont 2.01 section 10.1 structural error (strict loading).
+    case structural(SF2StructuralError)
 }
 
 public struct SF2SampleHeader: Equatable, Sendable {
@@ -80,6 +82,13 @@ public final class SF2SoundFont: @unchecked Sendable {
     /// Optional `sm24` low bytes (parsed, unused, like gbk).
     public let sm24: [UInt8]?
     public let riffSize: Int
+    /// `ifil` (nil when absent or malformed; lenient loads only).
+    public let version: SF2SpecVersion?
+    /// Version used for version-aware rules (`version`, else 2.01).
+    public let specVersion: SF2SpecVersion
+    /// Structural problems found while loading (section 10.1). Empty for strict loads.
+    public let warnings: [SF2StructuralError]
+    public let loadOptions: SF2LoadOptions
     /// pdta tables, terminal records (EOP/EOI/EOS) included.
     public let phdr: [SF2PresetHeader]
     public let pbag: [SF2Bag]
@@ -100,38 +109,55 @@ public final class SF2SoundFont: @unchecked Sendable {
     public var presets: ArraySlice<SF2PresetHeader> { phdr.dropLast() }
 
     /// Reads and parses the file on a background task (never on the caller's thread).
-    public static func load(contentsOf url: URL) async throws -> SF2SoundFont {
+    public static func load(contentsOf url: URL, options: SF2LoadOptions = .lenient) async throws -> SF2SoundFont {
         try await Task.detached(priority: .userInitiated) {
             let data = try Data(contentsOf: url, options: .mappedIfSafe)
-            return try SF2SoundFont(data: data)
+            return try SF2SoundFont(data: data, options: options)
         }.value
     }
 
-    public convenience init(contentsOf url: URL) throws {
-        try self.init(data: try Data(contentsOf: url, options: .mappedIfSafe))
+    public convenience init(contentsOf url: URL, options: SF2LoadOptions = .lenient) throws {
+        try self.init(data: try Data(contentsOf: url, options: .mappedIfSafe), options: options)
     }
 
-    public init(data: Data) throws {
+    public convenience init(data: Data) throws {
+        try self.init(data: data, options: .lenient)
+    }
+
+    /// Parses `data`. `.lenient` (the default, and what `.gbk` callers use) keeps the historical
+    /// behavior and records structural problems in `warnings`; `.strict` throws
+    /// `SF2Error.structural(...)` for the first SoundFont 2.01 section 10.1 violation.
+    public init(data: Data, options: SF2LoadOptions) throws {
         var info: [String: String] = [:]
+        var rawInfo: [(String, [UInt8])] = []
         var smpl: [Int16]?
         var sm24: [UInt8]?
         var phdr: [SF2PresetHeader] = [], pbag: [SF2Bag] = [], pmod: [SF2ModRecord] = [], pgen: [SF2GenRecord] = []
         var inst: [SF2InstrumentHeader] = [], ibag: [SF2Bag] = [], imod: [SF2ModRecord] = [], igen: [SF2GenRecord] = []
         var shdr: [SF2SampleHeader] = []
         var riffSize = 0
+        var issues: [SF2StructuralError] = []
+        var topOrder: [String] = [], pdtaOrder: [String] = []
+        var smplBytes = 0
 
         try data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
             var r = ByteReader(raw)
             guard try r.fourCC() == "RIFF" else { throw SF2Error.notRIFF }
             riffSize = Int(try r.u32())
             guard try r.fourCC() == "sfbk" else { throw SF2Error.notSoundFont }
+            // P-01: the RIFF size covers the file (one trailing pad byte allowed).
+            if !(riffSize + 8 == raw.count || (riffSize % 2 == 1 && riffSize + 9 == raw.count)) {
+                issues.append(.riffSize(declared: riffSize, actual: raw.count - 8))
+            }
 
             while !r.eof {
                 let id = try r.fourCC()
                 let size = Int(try r.u32())
                 let chunkStart = r.pos
+                if chunkStart + size > raw.count { issues.append(.truncatedChunk(id)) }
                 if id == "LIST" {
                     let listType = try r.fourCC()
+                    topOrder.append(listType)
                     let listEnd = min(chunkStart + size, raw.count)
                     switch listType {
                     case "INFO":
@@ -139,7 +165,9 @@ public final class SF2SoundFont: @unchecked Sendable {
                             let sid = try r.fourCC()
                             let ssize = Int(try r.u32())
                             let start = r.pos
+                            if start + ssize > listEnd { issues.append(.truncatedChunk(sid)) }
                             let bytes = try r.bytes(ssize)
+                            rawInfo.append((sid, Array(bytes)))
                             var s = String(decoding: bytes, as: UTF8.self)
                             if s.contains("\u{FFFD}") { s = String(bytes.map { Character(Unicode.Scalar($0)) }) }
                             while s.hasSuffix("\0") { s.removeLast() }
@@ -151,7 +179,10 @@ public final class SF2SoundFont: @unchecked Sendable {
                             let sid = try r.fourCC()
                             let ssize = Int(try r.u32())
                             let start = r.pos
+                            if start + ssize > listEnd { issues.append(.truncatedChunk(sid)) }
                             if sid == "smpl" {
+                                smplBytes = ssize
+                                if ssize % 2 != 0 { issues.append(.oddSampleByteCount(ssize)) }
                                 let n = ssize / 2
                                 try r.need(n * 2, "smpl")
                                 var out = [Int16](repeating: 0, count: n)
@@ -164,6 +195,8 @@ public final class SF2SoundFont: @unchecked Sendable {
                                 smpl = out
                             } else if sid == "sm24" {
                                 sm24 = Array(try r.bytes(ssize))
+                            } else {
+                                issues.append(.unknownChunk(sid, in: "sdta"))
                             }
                             r.pos = align2(start + ssize)
                         }
@@ -172,7 +205,10 @@ public final class SF2SoundFont: @unchecked Sendable {
                             let sid = try r.fourCC()
                             let ssize = Int(try r.u32())
                             let start = r.pos
+                            pdtaOrder.append(sid)
+                            if start + ssize > listEnd { issues.append(.truncatedChunk(sid)) }
                             try r.need(ssize, sid)
+                            if let rec = Self.recordSizes[sid], ssize % rec != 0 { issues.append(.recordSize(sid, ssize)) }
                             switch sid {
                             case "phdr":
                                 phdr = try (0 ..< ssize / 38).map { _ in
@@ -198,32 +234,54 @@ public final class SF2SoundFont: @unchecked Sendable {
                                         originalPitch: Int(try r.u8()), pitchCorrection: Int(Int8(bitPattern: try r.u8())),
                                         sampleLink: Int(try r.u16()), sampleType: Int(try r.u16()))
                                 }
-                            default: break
+                            default: issues.append(.unknownChunk(sid, in: "pdta"))
                             }
                             r.pos = align2(start + ssize)
                         }
                     default:
+                        issues.append(.unknownChunk(listType, in: "RIFF"))
                         r.pos = listEnd
                     }
                     r.pos = align2(r.pos)
                 } else {
+                    topOrder.append(id)
+                    issues.append(.unknownChunk(id, in: "RIFF"))
                     r.pos = align2(chunkStart + size)
                 }
             }
         }
 
-        let tables: [(String, Int)] = [("phdr", phdr.count), ("pbag", pbag.count), ("pgen", pgen.count), ("inst", inst.count),
-                                       ("ibag", ibag.count), ("igen", igen.count), ("shdr", shdr.count)]
-        for (name, count) in tables where count == 0 { throw SF2Error.missingTable(name) }
+        let strict = options.mode == .strict
+        let infoResult = SF2InfoParser.parse(rawInfo)
+        issues += infoResult.issues
+        issues += SF2Validator.validate(topOrder: topOrder, pdtaOrder: pdtaOrder, phdr: phdr, pbag: pbag, pmod: pmod,
+                                        pgen: pgen, inst: inst, ibag: ibag, imod: imod, igen: igen, shdr: shdr,
+                                        sampleCount: smpl?.count ?? 0, hasIROM: infoResult.info["irom"] != nil)
+        if strict, let first = issues.first { throw SF2Error.structural(first) }
 
-        self.info = info
+        if !strict {
+            let tables: [(String, Int)] = [("phdr", phdr.count), ("pbag", pbag.count), ("pgen", pgen.count), ("inst", inst.count),
+                                           ("ibag", ibag.count), ("igen", igen.count), ("shdr", shdr.count)]
+            for (name, count) in tables where count == 0 { throw SF2Error.missingTable(name) }
+        }
+
+        self.info = strict ? infoResult.info : info
+        self.version = infoResult.version
+        self.specVersion = infoResult.version ?? SF2SpecVersion(major: 2, minor: 1)
+        self.warnings = issues
+        self.loadOptions = options
         self.samples = smpl ?? []
+        // 2.04 feature: sm24 is only meaningful for ifil >= 2.04 (P-07).
         self.sm24 = sm24
         self.riffSize = riffSize
         self.phdr = phdr; self.pbag = pbag; self.pmod = pmod; self.pgen = pgen
         self.inst = inst; self.ibag = ibag; self.imod = imod; self.igen = igen; self.shdr = shdr
-        if smpl == nil { throw SF2Error.missingSampleData }
+        _ = smplBytes
+        if smpl == nil, !strict { throw SF2Error.missingSampleData }
     }
+
+    static let recordSizes: [String: Int] = ["phdr": 38, "pbag": 4, "pmod": 10, "pgen": 4, "inst": 22, "ibag": 4,
+                                             "imod": 10, "igen": 4, "shdr": 46]
 
     private static func readBags(_ r: inout ByteReader, _ size: Int) throws -> [SF2Bag] {
         try (0 ..< size / 4).map { _ in SF2Bag(genNdx: Int(try r.u16()), modNdx: Int(try r.u16())) }
