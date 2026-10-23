@@ -36,6 +36,8 @@ struct SF2Builder {
     var omitSmpl = false
     /// Edits the finished file bytes (wrong ckSize, broken records, ...).
     var mutate: ((inout [UInt8]) -> Void)?
+    /// Edits one pdta table body before it is wrapped (record-size, index and reference tests).
+    var tableEdit: ((String, inout [UInt8]) -> Void)?
 
     static func le16(_ v: Int) -> [UInt8] { [UInt8(v & 255), UInt8(v >> 8 & 255)] }
     static func le32(_ v: Int) -> [UInt8] { [UInt8(v & 255), UInt8(v >> 8 & 255), UInt8(v >> 16 & 255), UInt8(v >> 24 & 255)] }
@@ -102,8 +104,9 @@ struct SF2Builder {
             shdr += [UInt8(s.pitch & 255), UInt8(bitPattern: Int8(s.corr))] + Self.le16(s.link) + Self.le16(s.type)
         }
         shdr += Self.name20("EOS") + [UInt8](repeating: 0, count: 26)
-        let tables: [String: [UInt8]] = ["phdr": phdr, "pbag": pbag, "pmod": pmod, "pgen": pgen, "inst": inst,
+        var tables: [String: [UInt8]] = ["phdr": phdr, "pbag": pbag, "pmod": pmod, "pgen": pgen, "inst": inst,
                                          "ibag": ibag, "imod": imod, "igen": igen, "shdr": shdr]
+        if let tableEdit { for k in Array(tables.keys) { tableEdit(k, &tables[k]!) } }
         var pdta: [UInt8] = []
         for id in pdtaOrder where id != omitTable { pdta += Self.chunk(id, tables[id] ?? []) }
         func extras(_ c: String) -> [UInt8] { extraChunks.filter { $0.0 == c }.flatMap { Self.chunk($0.1, $0.2) } }

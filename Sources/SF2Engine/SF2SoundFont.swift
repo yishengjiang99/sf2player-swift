@@ -140,7 +140,7 @@ public final class SF2SoundFont: @unchecked Sendable {
         var topOrder: [String] = [], pdtaOrder: [String] = []
         var smplBytes = 0
 
-        try data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+        do { try data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
             var r = ByteReader(raw)
             guard try r.fourCC() == "RIFF" else { throw SF2Error.notRIFF }
             riffSize = Int(try r.u32())
@@ -249,6 +249,8 @@ public final class SF2SoundFont: @unchecked Sendable {
                     r.pos = align2(chunkStart + size)
                 }
             }
+        } } catch SF2Error.truncated(let what) where options.mode == .strict {
+            throw SF2Error.structural(.truncatedChunk(what))
         }
 
         let strict = options.mode == .strict
@@ -481,6 +483,9 @@ public final class SF2SoundFont: @unchecked Sendable {
 
     private func makeRegion(_ g: [Int: Int], normalize: Bool, includeStereoLinks: Bool, spec: Bool = false) -> SF2Region? {
         guard let sampleID = g[Gen.sampleID], sampleID >= 0, sampleID < shdr.count else { return nil }
+        // P-12/P-13 (spec): the terminal EOS is never played. P-06: no ROM in this engine, so ROM
+        // samples (sfSampleType bit 15) never sound and smpl is never read at their offsets.
+        if spec && (sampleID >= shdr.count - 1 || shdr[sampleID].sampleType & 0x8000 != 0) { return nil }
         let sh = shdr[sampleID]
         let n = samples.count
         func offset(_ fine: Int, _ coarse: Int) -> Int { (g[fine] ?? 0) + (g[coarse] ?? 0) * 32768 }
