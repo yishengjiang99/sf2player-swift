@@ -33,7 +33,7 @@ final class SF2ParserTests: XCTestCase {
         XCTAssertEqual(sf.inst.last?.instName, "EOI")
     }
 
-    func testRegionMergeFollowsGbkRules() throws {
+    func testRegionMergeFollowsSpecRules() throws {
         let sf = try SF2SoundFont(data: basicBank().build())
         let regions = try sf.buildRegionsForPreset(0)
         XCTAssertEqual(regions.count, 2)
@@ -59,8 +59,8 @@ final class SF2ParserTests: XCTestCase {
         let b = regions[1]
         XCTAssertEqual(b.sample.end, 190, "startAddrsOffset trims the copy")
         XCTAssertEqual(b.sample.loopStart, 40)
-        XCTAssertEqual(b.modEnv.sustain, 0.25)
-        XCTAssertEqual(b.initialFilterFcCents, 13500, "sub-1500 cutoff sanitized to open")
+        XCTAssertEqual(b.modEnv.sustain, 0.75, "2.01 #29: sustainModEnv 250 = 25 % below full scale (gbk-legacy read it as a level)")
+        XCTAssertEqual(b.initialFilterFcCents, 1500, "E-03: clamped to the 8.1.3 minimum (gbk-legacy opened the filter)")
         XCTAssertEqual(b.sampleModes, 0)
     }
 
@@ -70,7 +70,7 @@ final class SF2ParserTests: XCTestCase {
         bank.instruments[0].1[2].gens.insert((Gen.startAddrsOffset, -20), at: 0) // overridden later in-zone (last wins)
         bank.instruments[0].1.append(.init(gens: [(Gen.startAddrsCoarseOffset, -1), (Gen.sampleID, 0)])) // wraps -> clamps -> dropped
         let regions = try SF2SoundFont(data: bank.build()).buildRegionsForPreset(0)
-        XCTAssertEqual(regions.count, 2)
+        XCTAssertEqual(regions.count, 3, "S-03: a negative coarse offset clamps to the sample start; the zone is kept (gbk-legacy dropped it)")
         XCTAssertEqual(regions[0].sampleModes, 0)
         XCTAssertEqual(regions[0].sample.loopStart, 0)
         XCTAssertEqual(regions[0].sample.loopEnd, regions[0].sample.end)
@@ -84,8 +84,9 @@ final class SF2ParserTests: XCTestCase {
         bank.sampleHeaders[0].link = 1
         bank.sampleHeaders.append(.init(name: "right", start: 246, end: 346, loopStart: 250, loopEnd: 340, link: 0, type: 2))
         let r = try SF2SoundFont(data: bank.build()).buildRegionsForPreset(0)[0]
-        XCTAssertEqual(r.sample.dataR?.count, 100)
-        XCTAssertEqual(r.sample.dataR?[0], 1.0)
+        // S-10: stereo is one voice per zone (each zone plays its own sample), so no right buffer is
+        // attached. gbk-legacy loaded the linked sample as dataR.
+        XCTAssertNil(r.sample.dataR)
     }
 
     func testSampleBuffersAreSharedAcrossIdenticalRanges() throws {
@@ -124,22 +125,23 @@ final class SF2ParserTests: XCTestCase {
         XCTAssertEqual(sf.shdr.count, 921)
         XCTAssertEqual(sf.samples.count, 16_048_567)
         XCTAssertEqual(sf.phdr[0].presetName, "Marimba")
-        // values printed by gbk parseSF2 / buildRegionsForPreset(0)
+        // values printed by gbk (eee3c44, 2.01 port) SF2SoundFont.buildRegionsForPreset(0). gbk-legacy: 152 regions
+        // (preset-zone key/velocity ranges ignored, every split layered), attack -16332 tc (unclamped), 1_881_468 points, violin 156.
         let r = try sf.buildRegionsForPreset(0)
-        XCTAssertEqual(r.count, 152)
+        XCTAssertEqual(r.count, 81)
         XCTAssertEqual(r[0].keyRange.1, 48); XCTAssertEqual(r[0].velRange.0, 121)
         XCTAssertEqual(r[0].sample.dataL.count, 17464)
         XCTAssertEqual(r[0].sample.loopStart, 17230); XCTAssertEqual(r[0].sample.loopEnd, 17400)
         XCTAssertEqual(r[0].fineTune, 18)
-        XCTAssertEqual(r[0].volEnv, SF2VolEnv(delayTc: -12000, attackTc: -16332, holdTc: -498, decayTc: 3916, sustainCb: 1000, releaseTc: 3916))
+        XCTAssertEqual(r[0].volEnv, SF2VolEnv(delayTc: -12000, attackTc: -12000, holdTc: -498, decayTc: 3916, sustainCb: 1000, releaseTc: 3916))
         XCTAssertEqual(r[0].initialFilterFcCents, 11810)
         XCTAssertEqual(r[0].sample.dataL[100], -0.000213623046875)
         XCTAssertNil(r[0].sample.dataR)
-        XCTAssertEqual(r.reduce(0) { $0 + $1.sample.dataL.count }, 1_881_468)
+        XCTAssertEqual(r.reduce(0) { $0 + $1.sample.dataL.count }, 1_113_969)
         let violin = sf.resolvePresetIndex(program: 40, bank: 0)
         XCTAssertEqual(violin, 33)
         XCTAssertEqual(sf.presetName(33), "Violin")
-        XCTAssertEqual(try sf.buildRegionsForPreset(33).count, 156)
+        XCTAssertEqual(try sf.buildRegionsForPreset(33).count, 145)
         XCTAssertNotNil(sf.info["ICMT"]?.range(of: "License v2.0"))
     }
 

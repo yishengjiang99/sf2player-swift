@@ -11,7 +11,14 @@ import Foundation
 /// pedal, RPN 0 and NRPN, all-notes/sound-off, reset controllers, program change, channel and poly
 /// pressure), exclusive classes, the 2.01 filter Q rule, linear pan, triangle LFOs, key-number
 /// envelope scaling, and reverb / chorus sends (see docs/SF2_COMPLIANCE.md).
-public enum SF2Fidelity: Sendable { case gbk, spec }
+/// Rendering rules. There is one rule set: SoundFont 2.01 (`.spec`). `.gbk` is an alias of `.spec`.
+/// The gbk JS engine (yishengjiang99/gbk, branch sf2-201-compliance) became a 2.01 port of this
+/// engine, so the two are the same thing. See docs/SF2_COMPLIANCE.md "Fidelity".
+public enum SF2Fidelity: Sendable {
+    case spec
+    /// Alias of `.spec`: the gbk engine is now SoundFont 2.01 compliant, and the old gbk-legacy rules are gone.
+    public static let gbk: SF2Fidelity = .spec
+}
 
 /// One modulator (sfModList record). `src` / `amtSrc` are raw SFModulator words.
 public struct SF2Modulator: Equatable, Sendable {

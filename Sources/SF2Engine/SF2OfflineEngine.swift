@@ -28,11 +28,14 @@ public struct SF2StereoBuffer: Sendable {
 public enum SF2OfflineRenderer {
     /// Port of gbk `renderOfflineSequenceToAudioBuffer`.
     public static func renderOfflineSequence(sampleRate: Double, length: Int, tracks: [SF2TrackState], events: [SF2SynthEvent],
-                                             maxVoices: Int = 64, fidelity: SF2Fidelity = .gbk) -> SF2StereoBuffer {
+                                             maxVoices: Int = 64, fidelity: SF2Fidelity = .spec,
+                                             masterDynamicsEnabled: Bool = true, masterGainDb: Double = -3) -> SF2StereoBuffer {
         var left = [Float](repeating: 0, count: length)
         var right = [Float](repeating: 0, count: length)
         let engine = Sf2SynthEngine(outSr: sampleRate, maxVoices: maxVoices)
         engine.fidelity = fidelity
+        engine.masterDynamicsEnabled = masterDynamicsEnabled
+        engine.masterGainDb = masterGainDb
         engine.setTrackStates(tracks)
         let sorted = SF2EventOrder.sorted(events)
         left.withUnsafeMutableBufferPointer { l in

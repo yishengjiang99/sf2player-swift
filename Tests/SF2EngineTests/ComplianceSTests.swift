@@ -13,7 +13,7 @@ final class ComplianceSTests: XCTestCase {
         let spec = try f.regionList(forPreset: 0, fidelity: .spec)
         XCTAssertEqual(spec.regions[0].sample.dataL[10], 0.25, "raw 8192 / 32768")
         let gbk = try f.regionList(forPreset: 0, fidelity: .gbk)
-        XCTAssertEqual(gbk.regions[0].sample.dataL[10], 1.0, "gbk peak-normalizes (unchanged)")
+        XCTAssertEqual(gbk.regions[0].sample.dataL[10], 0.25, ".gbk is an alias of .spec: no normalization")
     }
 
     func test_S05_unpitchedOriginalKey() throws {

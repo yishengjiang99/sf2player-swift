@@ -127,7 +127,14 @@ public struct TrackRT {
     public var present = false
     public var list: Int32 = -1
     public var cc7 = 100.0, cc10 = 64.0, cc11 = 127.0, pan = 0.0, gain = 1.0
+    /// `.spec`: the track's CC7/CC10/CC11 override the channel controller state of every channel it plays
+    /// on (`chanMask`), so they act through the 2.01 default modulators. Set for non-default initial values
+    /// (power-on defaults are already the channel state) and by any track `.setControllers` CC.
+    public var ccSet = false
+    public var chanMask: UInt16 = 0
     public init() {}
+    /// Whether the CCs differ from the MIDI power-on defaults (100 / 64 / 127).
+    public var hasNonDefaultCcs: Bool { cc7 != 100 || cc10 != 64 || cc11 != 127 }
 }
 
 /// MIDI channel state (`.spec`): controllers, pitch wheel, RPN 0 bend range, channel preset.
@@ -207,7 +214,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         var freeCount: Int
         var tracks: UnsafeMutablePointer<TrackRT>
         var store: UnsafeMutablePointer<SF2RegionStore.Header>
-        var spec = false
+        var spec = true
         var chans: UnsafeMutablePointer<ChannelRT>
         /// 16 x 128 controller values.
         var ccs: UnsafeMutablePointer<UInt8>
@@ -219,6 +226,11 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         var revL = 0.0, revR = 0.0, choL = 0.0, choR = 0.0
         var fx: SF2EffectsRT
         var fxOn = true
+        /// Master bus (non-normative), applied in renderRange / renderScheduled for every fidelity.
+        var master: MasterBusRT
+        var masterOn = true
+        var masterGainDb = -3.0
+        var masterGain = pow(10, -3.0 / 20)
     }
 
     public let outSr: Double
@@ -253,7 +265,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         programs.initialize(repeating: -1, count: 129 * 128)
         st = .allocate(capacity: 1)
         st.initialize(to: State(maxVoices: mv, capacity: cap, voices: voices, order: order, free: free, freeCount: cap,
-                                tracks: tracks, store: store.hdr, chans: chans, ccs: ccs, nrpn: nrpn, poly: poly, programs: programs, fx: SF2EffectsRT(sr: outSr)))
+                                tracks: tracks, store: store.hdr, chans: chans, ccs: ccs, nrpn: nrpn, poly: poly, programs: programs, fx: SF2EffectsRT(sr: outSr), master: MasterBusRT(sampleRate: outSr)))
         resetChannelsRT()
     }
 
@@ -264,15 +276,16 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         s.tracks.deinitialize(count: Self.maxTracks); s.tracks.deallocate()
         s.chans.deallocate(); s.ccs.deallocate(); s.nrpn.deallocate(); s.poly.deallocate(); s.programs.deallocate()
         s.fx.free()
+        s.master.free()
         st.deinitialize(count: 1); st.deallocate()
     }
 
     // MARK: - gbk-shaped API (tests, offline)
 
-    /// Rendering rules (default `.gbk`). Set before rendering (not real-time safe to change mid-note).
+    /// Rendering rules: always `.spec` (`.gbk` is an alias). Set before rendering (not real-time safe to change mid-note).
     public var fidelity: SF2Fidelity {
-        get { st.pointee.spec ? .spec : .gbk }
-        set { st.pointee.spec = newValue == .spec }
+        get { .spec }
+        set { st.pointee.spec = true }
     }
 
     /// Current controller value on a MIDI channel (`.spec` state).
@@ -360,6 +373,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
             r.cc11 = max(0, min(127, t.cc11Expression ?? 127))
             r.pan = max(-1, min(1, t.pan ?? 0))
             r.gain = max(0, t.gain ?? 1)
+            r.ccSet = r.hasNonDefaultCcs
             return (t.trackIndex, r)
         }
         resetTracksRT()
@@ -422,6 +436,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
 
     /// MIDI power-on channel state: CC7 100, CC10 64, CC11 127, others 0; bend center, range 2 semitones.
     public func resetChannelsRT() {
+        st.pointee.cc7 = 100; st.pointee.cc10 = 64; st.pointee.cc11 = 127
         let s = st.pointee
         for c in 0 ..< 16 {
             s.chans[c] = ChannelRT()
@@ -454,7 +469,11 @@ public final class Sf2SynthEngine: @unchecked Sendable {
     }
 
     public func setTrackRT(_ index: Int, _ t: TrackRT) {
-        if index >= 0 && index < Self.maxTracks { st.pointee.tracks[index] = t }
+        guard index >= 0 && index < Self.maxTracks else { return }
+        var r = t
+        r.ccSet = r.ccSet || r.hasNonDefaultCcs
+        r.chanMask = 0
+        st.pointee.tracks[index] = r
     }
 
     public func clearVoices() {
@@ -550,6 +569,13 @@ public final class Sf2SynthEngine: @unchecked Sendable {
                 }
             }
             if !any { return }
+            if s.pointee.spec, let t = track, t.pointee.ccSet {
+                let ch = Int(msg.channel >= 0 && msg.channel < 16 ? msg.channel : 0)
+                if t.pointee.chanMask & (1 << ch) == 0 {
+                    t.pointee.chanMask |= 1 << ch
+                    applyTrackCcsRT(t, ch)
+                }
+            }
             var trackVolumeMul = 1.0, trackPanPos = 0.0
             if let t = track?.pointee {
                 if s.pointee.spec {
@@ -592,11 +618,16 @@ public final class Sf2SynthEngine: @unchecked Sendable {
                 if msg.cc11.isFinite { t.pointee.cc11 = cc(msg.cc11) }
                 if msg.pan.isFinite { t.pointee.pan = max(-1, min(1, msg.pan)) }
                 if msg.gain.isFinite { t.pointee.gain = max(0, msg.gain) }
+                if s.pointee.spec && (msg.cc7.isFinite || msg.cc10.isFinite || msg.cc11.isFinite) {
+                    t.pointee.ccSet = true
+                    for c in 0 ..< 16 where t.pointee.chanMask & (1 << c) != 0 { applyTrackCcsRT(t, c) }
+                }
                 return
             }
-            if msg.cc7.isFinite { s.pointee.cc7 = cc(msg.cc7) }
-            if msg.cc10.isFinite { s.pointee.cc10 = cc(msg.cc10) }
-            if msg.cc11.isFinite { s.pointee.cc11 = cc(msg.cc11) }
+            // Engine-wide (one engine per app track): in .spec CC7/10/11 go to every channel's controller state.
+            if msg.cc7.isFinite { s.pointee.cc7 = cc(msg.cc7); if s.pointee.spec { for c in 0 ..< 16 { controlChangeRT(c, 7, Int(s.pointee.cc7)) } } }
+            if msg.cc10.isFinite { s.pointee.cc10 = cc(msg.cc10); if s.pointee.spec { for c in 0 ..< 16 { controlChangeRT(c, 10, Int(s.pointee.cc10)) } } }
+            if msg.cc11.isFinite { s.pointee.cc11 = cc(msg.cc11); if s.pointee.spec { for c in 0 ..< 16 { controlChangeRT(c, 11, Int(s.pointee.cc11)) } } }
 
         case SF2SynthEvent.Kind.controlChange.rawValue:
             guard s.pointee.spec, msg.channel >= 0, msg.channel < 16, msg.note >= 0, msg.note < 128 else { return }
@@ -905,6 +936,10 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         }
     }
 
+    @inline(__always) func applyTrackCcsRT(_ t: UnsafeMutablePointer<TrackRT>, _ ch: Int) {
+        controlChangeRT(ch, 7, Int(t.pointee.cc7)); controlChangeRT(ch, 10, Int(t.pointee.cc10)); controlChangeRT(ch, 11, Int(t.pointee.cc11))
+    }
+
     /// Channel-mode controller message (RPN 0 pitch-bend range, CC121 reset), then live modulator update.
     func controlChangeRT(_ channel: Int, _ cc: Int, _ value: Int) {
         let s = st.pointee
@@ -1085,6 +1120,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         for i in 0 ..< count {
             var (l, r) = renderFrame(ccPanPos)
             if fx { let w = takeSends(); l += w.0; r += w.1 } else { clearSends() }
+            (l, r) = applyMaster(l, r)
             outL[i] = Float(l)
             outR[i] = Float(r)
         }
@@ -1099,7 +1135,34 @@ public final class Sf2SynthEngine: @unchecked Sendable {
     }
 
     /// Clears the built-in reverb / chorus state. Call while not rendering.
-    public func resetEffects() { st.pointee.fx.clear() }
+    public func resetEffects() { st.pointee.fx.clear(); st.pointee.master.reset() }
+
+    /// Master gain in dB (default -3 dB). It applies whether or not the dynamics are enabled. Set while not rendering.
+    public var masterGainDb: Double {
+        get { st.pointee.masterGainDb }
+        set { st.pointee.masterGainDb = newValue; st.pointee.masterGain = pow(10, newValue / 20) }
+    }
+    /// Master-bus dynamics (compressor, lookahead limiter, safety clip), on by default. Set while not rendering.
+    public var masterDynamicsEnabled: Bool {
+        get { st.pointee.masterOn }
+        set { st.pointee.masterOn = newValue }
+    }
+    public var masterParams: MasterBusParams {
+        get { st.pointee.master.params }
+        set { st.pointee.master.setParams(newValue) }
+    }
+    public var masterLatencyFrames: Int { st.pointee.master.latencyFrames }
+    public var masterGainReductionDb: Double { st.pointee.master.gainReductionDb }
+
+    @inline(__always) private func applyMaster(_ l: Double, _ r: Double) -> (Double, Double) {
+        let s = st
+        let g = s.pointee.masterGain
+        if s.pointee.masterOn {
+            s.pointee.master.process(l * g, r * g)
+            return (s.pointee.master.outL, s.pointee.master.outR)
+        }
+        return (l * g, r * g)
+    }
 
     @inline(__always) private func clearSends() {
         st.pointee.revL = 0; st.pointee.revR = 0; st.pointee.choL = 0; st.pointee.choR = 0
@@ -1158,6 +1221,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
             }
             var (l, r) = renderFrame(ccPanPos)
             if fx { let w = takeSends(); l += w.0; r += w.1 } else { clearSends() }
+            (l, r) = applyMaster(l, r)
             outL[i] = Float(l)
             outR[i] = Float(r)
             rendered += 1

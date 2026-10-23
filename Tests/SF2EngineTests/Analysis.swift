@@ -101,6 +101,9 @@ struct SpecRender {
         let sf = try SF2SoundFont(data: b.build(), options: .strict)
         engine = Sf2SynthEngine(outSr: sampleRate, maxVoices: maxVoices)
         engine.fidelity = .spec
+        // Compliance measurements bypass the non-normative master bus.
+        engine.masterDynamicsEnabled = false
+        engine.masterGainDb = 0
         engine.setTrackStates([SF2TrackState(trackIndex: 0, regions: try sf.regionList(forPreset: preset, fidelity: .spec))])
         self.sampleRate = sampleRate
     }

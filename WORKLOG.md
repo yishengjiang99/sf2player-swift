@@ -49,3 +49,31 @@ Saved as /workspace/sf2-baseline.txt (box only; may be lost).
   row now pass or n/a and `matrixMustBeComplete = true`; `scripts/diff-fluidsynth` + `sf2-spec-render`
   dev executable + optional CI job (continue-on-error); docs/diff-report.md from CI run 39891233946;
   README + doc comments updated (2.01, fidelity modes, strict loading, effects, new events).
+
+## sf2-201-gbk-sync (2026-10-22)
+- `.gbk` is now an alias of `.spec` (`SF2Fidelity.gbk == .spec`). The gbk JS engine is a 2.01 port of this engine, at gbk branch sf2-201-compliance (pin: see docs/SF2_COMPLIANCE.md, "gbk pin").
+  - Tests that asserted gbk-legacy behaviour were updated to the 2.01 values, with the reason in each message:
+    - S-01: no normalization.
+    - Parser: sustainModEnv is an attenuation (0.75), and filter Fc is clamped to 1500 rather than opened.
+    - The coarse offset is clamped and the zone kept (3 regions).
+    - Stereo is one voice per zone, so there is no dataR.
+    - Track pan is linear and CC10 comes from events.
+    - Default-engine controllers apply. Offline `.gbk` output equals `.spec` output.
+    - G-11: every engine is spec.
+- Master bus (non-normative) is in SF2MasterBus.swift, mirroring gbk src/sf2/master-bus.ts:
+  - Stages: gain -3 dB, then compressor -6 dBFS 4:1 knee 6 dB 5/100 ms, then lookahead limiter (-0.3 dBFS, 50 ms, 1.5 ms), then safety clip.
+  - API: `masterGainDb`, `masterDynamicsEnabled`, `masterParams`, `masterLatencyFrames`.
+  - Applied in renderRange and renderScheduled, for every fidelity. The aux-bus renderRange is pre-master.
+  - Compliance SpecRender and the SpecFidelity helper turn it off and set gain to 0 dB. SF2OfflineRenderer gained `masterDynamicsEnabled` and `masterGainDb` parameters.
+  - The sf2-spec-render WAV writer clamps to +/-1 before int16.
+- swift test: 138 tests, 0 failures, 4 skipped.
+- CI fix: GU parse expected values (testGeneralUserGSMatchesGbkParse, skipped locally before) now match gbk 2.01 values (81 regions, attack -12000, 1_113_969 points, violin 145); G11 temp-engine use-after-free fixed (failed on macOS).
+
+## 2026-10-22 (pre-merge fixes, mirrors gbk 305615f)
+- `.spec` track CC7/CC10/CC11 now reach the audio: engine-wide `.setControllers` writes all 16 channels' controller
+  state; track values (non-default `SF2TrackState` / `setTrackRT`, or any track `.setControllers` CC) are written into
+  each channel the track plays on (first noteOn per channel, then live), through the 2.01 default modulators.
+  Power-on defaults never clobber in-stream CCs, so SF2Player plans (100/64/127) render unchanged.
+- sf2-parity-render reads track cc7Volume/cc10Pan/cc11Expression and setControllers events.
+- TrackControllersTests (5). gbk pin -> 305615f. 143 tests, 0 failures locally; GU parity 22 scenarios worst 1.4e-14.
+- gbk #38 merged to main as 4a3da62; pin moved to that merge commit.

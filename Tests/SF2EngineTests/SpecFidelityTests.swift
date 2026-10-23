@@ -9,6 +9,7 @@ final class SpecFidelityTests: XCTestCase {
     private func specEngine(_ regions: [SF2Region] = [makeRegion()]) -> Sf2SynthEngine {
         let e = Sf2SynthEngine(outSr: 44100)
         e.fidelity = .spec
+        e.masterDynamicsEnabled = false; e.masterGainDb = 0   // measure the synthesis model, not the master bus
         e.setTrackStates([SF2TrackState(trackIndex: 0, regions: SF2RegionList(regions))])
         return e
     }
@@ -117,16 +118,18 @@ final class SpecFidelityTests: XCTestCase {
         XCTAssertEqual(firstVoice(e).vibToPitch, 50 * 127.0 / 128, accuracy: 1e-9)
     }
 
-    func testControllersIgnoredInGbkMode() {
+    /// Formerly testControllersIgnoredInGbkMode. `.gbk` is now an alias of `.spec`, so controllers apply on a default engine.
+    func testControllersApplyOnDefaultEngine() {
         let e = Sf2SynthEngine(outSr: 44100)
+        XCTAssertEqual(e.fidelity, .spec); XCTAssertEqual(SF2Fidelity.gbk, .spec)
         e.setTrackStates([SF2TrackState(trackIndex: 0, regions: SF2RegionList([makeRegion()]))])
         noteOn(e)
         let v0 = firstVoice(e)
         e.dispatchEvent(.controlChange(7, value: 10, trackIndex: 0, channel: 0))
         e.dispatchEvent(.pitchBend(0, trackIndex: 0, channel: 0))
-        XCTAssertEqual(firstVoice(e).baseGain, v0.baseGain)
-        XCTAssertEqual(firstVoice(e).baseRate, v0.baseRate)
-        XCTAssertEqual(e.controller(7, channel: 0), 100)
+        XCTAssertEqual(firstVoice(e).baseGain / v0.baseGain, t2Gain(10) / t2Gain(100), accuracy: 1e-9)
+        XCTAssertEqual(firstVoice(e).baseRate / v0.baseRate, pow(2, -200.0 / 1200), accuracy: 1e-9)
+        XCTAssertEqual(e.controller(7, channel: 0), 10)
     }
 
     // MARK: velocity, filter
@@ -202,11 +205,12 @@ final class SpecOfflineTests: XCTestCase {
             .init(kind: .noteOn, frame: 0, trackIndex: 0, channel: 0, note: 60, velocity: 127),
             .init(kind: .controlChange, frame: 100, trackIndex: 0, channel: 0, note: 7, velocity: 50),
         ]
-        let gbk = SF2OfflineRenderer.renderOfflineSequence(sampleRate: 44100, length: 400, tracks: tracks, events: events)
+        let gbk = SF2OfflineRenderer.renderOfflineSequence(sampleRate: 44100, length: 400, tracks: tracks, events: events,
+                                                           fidelity: .gbk, masterDynamicsEnabled: false, masterGainDb: 0)
         let spec = SF2OfflineRenderer.renderOfflineSequence(sampleRate: 44100, length: 400, tracks: tracks, events: events,
-                                                            fidelity: .spec)
-        // gbk ignores CC7 events; spec scales by the Table 2 concave CC7 law after frame 100.
-        XCTAssertEqual(gbk.left[50], gbk.left[300], accuracy: 1e-6)
+                                                            fidelity: .spec, masterDynamicsEnabled: false, masterGainDb: 0)
+        // .gbk is an alias of .spec: identical output. CC7 scales by the Table 2 concave law after frame 100.
+        XCTAssertEqual(gbk.left, spec.left); XCTAssertEqual(gbk.right, spec.right)
         // frame 95: after the 1 ms delay + 1 ms attack (-32768 tc clamped to -12000 in .spec).
         XCTAssertEqual(Double(spec.left[300] / spec.left[95]), t2Gain(50) / t2Gain(100), accuracy: 1e-4)
     }

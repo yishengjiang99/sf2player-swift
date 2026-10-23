@@ -34,6 +34,6 @@ d.append(contentsOf: Array("RIFF".utf8)); u32(36 + bytes); d.append(contentsOf: 
 u32(16); u16(1); u16(2); u32(UInt32(sr)); u32(UInt32(sr) * 4); u16(4); u16(16)
 d.append(contentsOf: Array("data".utf8)); u32(bytes)
 for i in 0 ..< l.count {
-    for x in [l[i], r[i]] { u16(UInt16(bitPattern: Int16(max(-32768, min(32767, (Double(x) * 32767).rounded()))))) }
+    for x in [l[i], r[i]] { u16(UInt16(bitPattern: Int16((max(-1.0, min(1.0, Double(x))) * 32767).rounded()))) }
 }
 try d.write(to: URL(fileURLWithPath: a[8]))

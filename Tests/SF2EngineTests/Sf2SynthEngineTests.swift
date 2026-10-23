@@ -239,10 +239,10 @@ final class Sf2SynthEngineExtraTests: XCTestCase {
 
     func testTrackPanAndVolumeShapeOutput() {
         let list = SF2RegionList([makeRegion()])
-        let tracks = [SF2TrackState(trackIndex: 0, regions: list, cc7Volume: 127, cc10Pan: 0, cc11Expression: 127, pan: 0, gain: 1)]
+        let tracks = [SF2TrackState(trackIndex: 0, regions: list, cc7Volume: 127, cc10Pan: 64, cc11Expression: 127, pan: -1, gain: 1)]
         let out = SF2OfflineRenderer.renderOfflineSequence(sampleRate: 44100, length: 2000, tracks: tracks,
                                                           events: [.noteOn(60, velocity: 127, frame: 0, trackIndex: 0, channel: 0)])
-        // hard-left pan: right channel ~ cos(pi/2) ~ 0
+        // hard-left track pan (.spec: linear law, so right = 0). Track cc10Pan no longer pans (MIDI CC10 events do).
         XCTAssertGreaterThan(abs(out.left[1500]), 0.1)
         XCTAssertLessThan(abs(out.right[1500]), 1e-6)
     }
