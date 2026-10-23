@@ -33,7 +33,7 @@ engine.renderRange(&left, &right)
 ## Fidelity modes
 
 - `.spec` (the only mode): SoundFont **2.01** (`docs/SF2_COMPLIANCE.md` maps every spec requirement to a test).
-- `.gbk`: an alias of `.spec`. gbk's JS engine is now a 2.01 port of this engine (gbk pin `305615f3561d`,
+- `.gbk`: an alias of `.spec`. gbk's JS engine is now a 2.01 port of this engine (gbk pin `4a3da6234c51`,
   branch `sf2-201-compliance`), and the two render the same within 1e-6 per sample (`.github/workflows/ci.yml`, job `parity-gbk`).
   Files with `ifil >= 2.04` additionally get the 2.04 behaviour, decided in one place (`SF2SpecVersion`).
 

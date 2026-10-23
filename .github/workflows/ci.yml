@@ -45,6 +45,6 @@ jobs:
       - run: swift build -c release --product sf2-parity-render
       - run: |
           git clone -q https://github.com/yishengjiang99/gbk.git ../gbk
-          git -C ../gbk checkout -q 305615f3561d703784f1c7fe2784cc9f14d4c0e4
+          git -C ../gbk checkout -q 4a3da6234c512634df153273adf362fe60ad4dd5
       - run: cd ../gbk && npm ci --ignore-scripts
       - run: cd ../gbk && SF2_PARITY_SWIFT_BIN=$GITHUB_WORKSPACE/.build/release/sf2-parity-render node --import tsx/esm --test test/sf2-cross-engine-parity.test.ts

@@ -76,3 +76,4 @@ Saved as /workspace/sf2-baseline.txt (box only; may be lost).
   Power-on defaults never clobber in-stream CCs, so SF2Player plans (100/64/127) render unchanged.
 - sf2-parity-render reads track cc7Volume/cc10Pan/cc11Expression and setControllers events.
 - TrackControllersTests (5). gbk pin -> 305615f. 143 tests, 0 failures locally; GU parity 22 scenarios worst 1.4e-14.
+- gbk #38 merged to main as 4a3da62; pin moved to that merge commit.
