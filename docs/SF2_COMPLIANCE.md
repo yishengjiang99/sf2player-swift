@@ -49,8 +49,8 @@ every test named must exist under `Tests/`; status must be `pass`, `n/a (reason)
 | S-11 | §6.1 | Reads past end yield silence | test_S11_readPastEndIsSilent | pass |
 | G-01 | §9.1.1, §8.1.2 #51/52/56/58 | Pitch formula, measured f0 ±1 cent | test_G01_measuredPitch | pass |
 | G-02 | §8.1.1, §8.1.2 #46/47 | keynum / velocity substitution generators | test_G02_keynumVelocitySubstitution | pending |
-| G-03 | §8.1.2 #33–40, §9.1.7 | Volume envelope shape and timing | test_G03_volumeEnvelopeShape | pending |
-| G-04 | §8.1.2 #25–32 | Modulation envelope shape and timing | test_G04_modulationEnvelopeShape | pending |
+| G-03 | §8.1.2 #33–40, §9.1.7 | Volume envelope shape and timing | test_G03_volumeEnvelopeShape, test_G03_releaseFromAttackUsesCurrentLevel | pass |
+| G-04 | §8.1.2 #25–32 | Modulation envelope shape and timing (shape asserted on ModEnv directly; audio check via modEnvToPitch at sustain)| test_G04_modulationEnvelopeShape | pass |
 | G-05 | §8.1.2 #31/32/39/40 | Key-number envelope scaling (erratum: #32/#40 say hold, mean decay) | test_G05_keynumEnvelopeScaling | pending |
 | G-06 | §8.1.2 #21–24, §9.1.6 | Triangle LFOs, phase and frequency | test_G06_lfoTriangleFrequencyAndPhase | pending |
 | G-07 | §8.1.2 #7/#11 | modEnvToPitch / modEnvToFilterFc | test_G07_modEnvToPitchAndFc | pending |

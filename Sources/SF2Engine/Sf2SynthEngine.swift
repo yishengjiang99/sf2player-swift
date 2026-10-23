@@ -693,12 +693,14 @@ public final class Sf2SynthEngine: @unchecked Sendable {
             ve.holdTc = tc(ve.holdTc, d[35] + Double(reg.keynumToVolEnvHold) * keyDelta)
             ve.decayTc = tc(ve.decayTc, d[36] + Double(reg.keynumToVolEnvDecay) * keyDelta)
             ve.sustainCb = max(0, min(1440, tc(ve.sustainCb, d[37]))); ve.releaseTc = tc(ve.releaseTc, d[38])
+            voice.volEnv.spec = true
             voice.volEnv.setFromSf2(ve)
             var me = reg.modEnv
             me.delayTc = tc(me.delayTc, d[25]); me.attackTc = tc(me.attackTc, d[26])
             me.holdTc = tc(me.holdTc, d[27] + Double(reg.keynumToModEnvHold) * keyDelta)
             me.decayTc = tc(me.decayTc, d[28] + Double(reg.keynumToModEnvDecay) * keyDelta)
             me.sustain = max(0, min(1, me.sustain - d[29] / 1000)); me.releaseTc = tc(me.releaseTc, d[30])
+            voice.modEnv.spec = true
             voice.modEnv.setFromSf2(me)
             voice.modLfo.set(freqHz: fcCentsToHz(Double(reg.modLfoFreqCents) + d[22]),
                              delaySec: timecentsToSeconds(Double(reg.modLfoDelayTc) + d[21]))

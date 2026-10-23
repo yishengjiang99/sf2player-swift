@@ -136,3 +136,75 @@ final class ComplianceGTests: XCTestCase {
         XCTAssertLessThan(A.rmsDB(r.render(6000).l, from: 5800), -90)
     }
 }
+
+extension ComplianceGTests {
+    /// DC bank with the given envelope generators; returns |L| per frame normalized to the peak (dB).
+    private func envelope(_ gens: [(Int, Int)], noteOffAt: Double? = nil, seconds: Double) throws -> (db: [Double], r: SpecRender) {
+        let r = try SpecRender(B.single(B.dc(8000), loop: (100, 7900), instGens: [(Gen.sampleModes, 1)] + gens))
+        r.noteOn(60)
+        var out: [Float] = []
+        if let off = noteOffAt {
+            out = r.render(r.seconds(off)).l
+            r.noteOff(60)
+            out += r.render(r.seconds(seconds - off)).l
+        } else { out = r.render(r.seconds(seconds)).l }
+        // reference: the attack-free peak level of the same bank
+        let ref = try SpecRender(B.single(B.dc(8000), loop: (100, 7900), instGens: [(Gen.sampleModes, 1)]))
+        ref.noteOn(60)
+        let peak = Double(abs(ref.render(2000).l[1500]))
+        return (out.map { A.db(Double(abs($0)) / peak) }, r)
+    }
+
+    func test_G03_volumeEnvelopeShape() throws {
+        // attack 0.5 s (-1200 tc), hold 0.25 s (-2400 tc), decay 1 s per 100 dB (0 tc) to sustain 60 dB.
+        let (e, r) = try envelope([(Gen.attackVolEnv, -1200), (Gen.holdVolEnv, -2400), (Gen.decayVolEnv, 0), (Gen.sustainVolEnv, 600),
+                                   (Gen.releaseVolEnv, 0)], noteOffAt: 2.0, seconds: 2.5)
+        let sr = 44100.0
+        func at(_ s: Double) -> Double { e[Int(s * sr)] }
+        XCTAssertEqual(at(0.25), A.db(0.5), accuracy: 0.1, "attack is linear in amplitude (half way = -6.02 dB)")
+        XCTAssertEqual(at(0.125), A.db(0.25), accuracy: 0.1)
+        XCTAssertEqual(at(0.6), 0, accuracy: 0.1, "hold at peak")
+        XCTAssertEqual(at(0.75 + 0.3), -30, accuracy: 0.1, "decay: constant dB rate, 100 dB per decay time")
+        XCTAssertEqual(at(0.75 + 0.5), -50, accuracy: 0.1)
+        // sustain reached after decay * 600/1000 = 0.6 s (not the whole decay time)
+        let reach = (Int(0.75 * sr) ..< e.count).first { e[$0] <= -60 + 0.05 }!
+        XCTAssertEqual(Double(reach) / sr, 0.75 + 0.6, accuracy: max(0.001, 0.02 * 0.6))
+        XCTAssertEqual(at(1.8), -60, accuracy: 0.1, "sustain 600 cB below peak")
+        // release from -60 dB at 100 dB / s: -80 dB after 0.2 s; ends at 96 dB (0.36 s)
+        XCTAssertEqual(at(2.2), -80, accuracy: 0.1)
+        let end = (Int(2.0 * sr) ..< e.count).first { e[$0] < -200 }!
+        XCTAssertEqual(Double(end) / sr, 2.36, accuracy: 0.002)
+        XCTAssertEqual(r.engine.st.pointee.count, 0, "voice ended at 96 dB")
+    }
+
+    func test_G03_releaseFromAttackUsesCurrentLevel() throws {
+        let (e, _) = try envelope([(Gen.attackVolEnv, 0), (Gen.releaseVolEnv, 0)], noteOffAt: 0.1, seconds: 0.4)
+        let sr = 44100.0
+        let start = A.db(0.1) // linear attack: 10 % after 0.1 s of 1 s
+        XCTAssertEqual(e[Int(0.1 * sr) - 1], start, accuracy: 0.1)
+        XCTAssertEqual(e[Int(0.2 * sr)], start - 10, accuracy: 0.1, "10 dB per 0.1 s from the current level")
+    }
+
+    func test_G04_modulationEnvelopeShape() throws {
+        var m = ModEnv(sr: 1000)
+        m.spec = true
+        m.setFromSf2(SF2ModEnv(delayTc: -12000, attackTc: 0, holdTc: -12000, decayTc: 0, sustain: 0.4, releaseTc: 0))
+        m.noteOn()
+        var y: [Double] = []
+        for _ in 0 ..< 3000 { y.append(m.next()) }
+        XCTAssertEqual(y[499], modCurve(2, 0.5), accuracy: 1e-3, "convex attack")
+        XCTAssertGreaterThan(y[499], 0.5)
+        XCTAssertEqual(y[1000 + 300], 1 - 0.3, accuracy: 2e-3, "linear decay, full scale per decay time")
+        XCTAssertEqual(y[1000 + 650], 0.4, accuracy: 1e-9, "sustain reached after 0.6 s (not the full decay time)")
+        m.noteOff()
+        var rel: [Double] = []
+        for _ in 0 ..< 500 { rel.append(m.next()) }
+        XCTAssertEqual(rel[199], 0.2, accuracy: 2e-3, "release linear from current level, full scale per release time")
+        XCTAssertEqual(rel[450], 0, "reached 0 after 0.4 s, no 20 ms floor relevance")
+        // measured: modEnvToPitch 1200 at sustain 0.5 -> +600 cents
+        let r = try SpecRender(sineBank([(Gen.modEnvToPitch, 1200), (Gen.sustainModEnv, 500), (Gen.decayModEnv, -12000)]))
+        r.noteOn(60)
+        let out = r.render(22050)
+        XCTAssertEqual(A.cents(A.f0ZeroCrossing(out.l, sampleRate: 44100, from: 4410), 1000), 600, accuracy: 1)
+    }
+}

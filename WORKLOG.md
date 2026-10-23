@@ -32,3 +32,9 @@ Saved as /workspace/sf2-baseline.txt (box only; may be lost).
   Errata decided: pitch-wheel sensitivity mapped s/127 (12700 x s/127 = 100 s cents) — Table 2
   v/128 would give 198.4 cents at 2 semitones; bipolar max is 63/64 (b = 2u-1), Table 2 prints 127/128;
   §8.4.1/8.4.2 prose "velocity 1 -> 127/128" vs (127-v)/128 = 126/128 — followed the formula.
+- Chunk 4: Analysis.swift + SpecRender; G-01/G-09/G-10 (linear pan law in .spec only), S-02/03/04/08/11,
+  MIDI-01; fuzz P-99 (found a trap: non-finite read position from pathological tuning -> now reads
+  silence/finishes; values that were finite before are untouched, so .gbk output unchanged).
+  ASan run of the fuzz test: no memory errors; LeakSanitizer reports 873 bytes in XCTest's own
+  test-registration closures (run with ASAN_OPTIONS=detect_leaks=0 to silence).
+- Chunk 5: G-03/G-04 spec envelopes (VolEnv/ModEnv `spec` flag; gbk curves untouched), fastRelease/kill.
