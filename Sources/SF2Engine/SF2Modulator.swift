@@ -51,7 +51,7 @@ public struct SF2Modulator: Equatable, Sendable {
     /// 9.5: instrument-zone modulators (global then local, local replacing identical) replace identical
     /// defaults; preset-zone modulators (same rule) are added on top.
     static func merge(instGlobal: [SF2Modulator], instLocal: [SF2Modulator], presetGlobal: [SF2Modulator],
-                      presetLocal: [SF2Modulator]) -> [SF2Modulator] {
+                      presetLocal: [SF2Modulator], version: SF2SpecVersion = SF2SpecVersion(major: 2, minor: 4)) -> [SF2Modulator] {
         func overlay(_ base: [SF2Modulator], _ top: [SF2Modulator]) -> [SF2Modulator] {
             var out = base
             for m in top {

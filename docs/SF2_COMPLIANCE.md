@@ -24,25 +24,25 @@ every test named must exist under `Tests/`; status must be `pass`, `n/a (reason)
 | P-12 | §7.5, §7.9 | instrument < inst.count−1 and sampleID < shdr.count−1 at load | test_P12_instrumentAndSampleReferencesInRange | pass |
 | P-13 | §7.2, §7.6, §7.10 | Terminal records never played; orphans allowed; duplicate names kept | test_P13_terminalsNeverPlayedOrphansAndDuplicatesKept | pass |
 | P-99 | §10.1 | Fuzz: 10,000 mutations load or throw SF2Error; regions + 1,024 rendered frames never trap | test_P99_parserNeverCrashes | pending |
-| Z-01 | §7.3, §7.7 | Zone non-global iff last generator is instrument/sampleID; only first zone may be global (object with >1 zone) | test_Z01_globalZoneDetectedByLastGenerator | pending |
-| Z-02 | §7.5, §7.9 | Generators after the terminal instrument/sampleID ignored | test_Z02_generatorsAfterTerminalIgnored | pending |
-| Z-03 | §7.5, §7.9, §8.1.2 | keyRange only first; velRange only first or after keyRange | test_Z03_rangeGeneratorPositionRules | pending |
-| Z-04 | §7.5 | Later duplicate generator in a zone replaces the earlier one | test_Z04_duplicateGeneratorLastWins | pending |
-| Z-05 | §7.3, §7.7, §7.2, §7.6 | Non-first zone without terminal ignored; empty global ignored; zone-less objects ignored | test_Z05_incompleteZonesIgnored | pending |
-| Z-06 | §10.7 | sampleID in preset zone / instrument in instrument zone ignored | test_Z06_illegalIndexGeneratorsIgnored | pending |
-| Z-07 | §8.5 | Instrument-only generators ignored at preset level | test_Z07_instrumentOnlyGeneratorsIgnoredInPresets | pending |
-| Z-08 | §8.1.2, §10.3 | Unused/reserved/unknown enumerators ignored at both levels | test_Z08_reservedGeneratorsIgnored | pending |
-| Z-09 | §9.4 | Preset key/vel ranges intersect instrument ranges; empty → silent | test_Z09_presetRangesIntersect | pending |
-| Z-10 | §8.5, §9.4 | Local replaces global; preset value adds to instrument value or default (§8.5 example) | test_Z10_presetAddsToInstrumentOrDefault | pending |
-| Z-11 | §8.1.3, §10.5 | Single GenInfo table; summed values clamped to useful range | test_Z11_genInfoTableAndClamp | pending |
-| Z-12 | §7.2 | First duplicate (preset, bank) active; preset > 127 / bank > 128 never playable | test_Z12_presetResolution | pending |
-| S-01 | §6.1, §8.1.2 #48 | No normalization in .spec: level = raw/32768 | test_S01_specDoesNotNormalize | pending |
+| Z-01 | §7.3, §7.7 | Zone non-global iff last generator is instrument/sampleID; only first zone may be global (object with >1 zone) | test_Z01_globalZoneDetectedByLastGenerator | pass |
+| Z-02 | §7.5, §7.9 | Generators after the terminal instrument/sampleID ignored | test_Z02_generatorsAfterTerminalIgnored | pass |
+| Z-03 | §7.5, §7.9, §8.1.2 | keyRange only first; velRange only first or after keyRange | test_Z03_rangeGeneratorPositionRules | pass |
+| Z-04 | §7.5 | Later duplicate generator in a zone replaces the earlier one | test_Z04_duplicateGeneratorLastWins | pass |
+| Z-05 | §7.3, §7.7, §7.2, §7.6 | Non-first zone without terminal ignored; empty global ignored; zone-less objects ignored | test_Z05_incompleteZonesIgnored | pass |
+| Z-06 | §10.7 | sampleID in preset zone / instrument in instrument zone ignored | test_Z06_illegalIndexGeneratorsIgnored | pass |
+| Z-07 | §8.5 | Instrument-only generators ignored at preset level | test_Z07_instrumentOnlyGeneratorsIgnoredInPresets | pass |
+| Z-08 | §8.1.2, §10.3 | Unused/reserved/unknown enumerators ignored at both levels | test_Z08_reservedGeneratorsIgnored | pass |
+| Z-09 | §9.4 | Preset key/vel ranges intersect instrument ranges; empty → silent | test_Z09_presetRangesIntersect | pass |
+| Z-10 | §8.5, §9.4 | Local replaces global; preset value adds to instrument value or default (§8.5 example) | test_Z10_presetAddsToInstrumentOrDefault | pass |
+| Z-11 | §8.1.3, §10.5 | Single GenInfo table; summed values clamped to useful range | test_Z11_genInfoTableAndClamp | pass |
+| Z-12 | §7.2 | First duplicate (preset, bank) active; preset > 127 / bank > 128 never playable | test_Z12_presetResolution | pass |
+| S-01 | §6.1, §8.1.2 #48 | No normalization in .spec: level = raw/32768 | test_S01_specDoesNotNormalize | pass |
 | S-02 | §7.10, §10.1 | Sample points within smpl, end > start; else silent (lenient) / reject (strict) | test_S02_samplePointsOutOfRange | pending |
 | S-03 | §8.1.2 #0–4,12,45,50, §10.5 | Signed address offsets; clamp into the sample's own range keeping start < end | test_S03_signedAddressOffsets | pending |
 | S-04 | §7.10 | sampleRate 0 → practical value, no division by zero | test_S04_zeroSampleRate | pending |
-| S-05 | §7.10 | byOriginalPitch 128–255 → 60 | test_S05_unpitchedOriginalKey | pending |
-| S-06 | §8.1.2 #58 | overridingRootKey −1/absent → header key | test_S06_overridingRootKeyMinusOneUsesHeader | pending |
-| S-07 | §7.10 | chPitchCorrection signed cents (−4 example) | test_S07_pitchCorrection | pending |
+| S-05 | §7.10 | byOriginalPitch 128–255 → 60 | test_S05_unpitchedOriginalKey | pass |
+| S-06 | §8.1.2 #58 | overridingRootKey −1/absent → header key | test_S06_overridingRootKeyMinusOneUsesHeader | pass |
+| S-07 | §7.10 | chPitchCorrection signed cents (−4 example) | test_S07_pitchCorrection | pass |
 | S-08 | §8.1.2 #54, §9.1.2, §6.2 | sampleModes low 2 bits; mode 3 loops while held then plays to end | test_S08_sampleModesLowBits | pending |
 | S-09 | §7.10 | Loop sanity policy explicit and tested | test_S09_loopSanityPolicy | pending |
 | S-10 | §7.10 | Stereo pairs: one voice per zone, own pan, pitch from right zone; invalid link → mono | test_S10_stereoPairsOneVoicePerZone | pending |
