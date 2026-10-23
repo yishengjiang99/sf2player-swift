@@ -763,7 +763,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         v.pointee = voice
     }
 
-    // MARK: - SoundFont 2.04 (.spec)
+    // MARK: - SoundFont 2.01 (.spec; 2.04 features gated by SF2SpecVersion)
 
     @inline(__always) private func modInputs(_ channel: Int32, note: Int, velocity: Int, midiNote: Int) -> ModInputs {
         let c = Int(max(0, min(15, channel)))

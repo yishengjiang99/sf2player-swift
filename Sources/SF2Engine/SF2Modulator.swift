@@ -5,9 +5,12 @@ import Foundation
 // modulator set, and the instrument/preset merge rules. Used only by `SF2Fidelity.spec`.
 
 /// Rendering rules. `.gbk` reproduces yishengjiang99/gbk bit for bit (no modulators, CC or pitch
-/// bend, gbk generator merge). `.spec` follows SoundFont 2.04: zone override rules, default and file
-/// modulators, live MIDI channel controllers (CC1/7/10/11, pitch bend + RPN 0 range), filter Q,
-/// triangle LFOs at 8.176 Hz x 2^(cents/1200), key-number envelope scaling, per-channel presets.
+/// bend, gbk generator merge). `.spec` follows SoundFont 2.01 (2.04 behaviour only for files whose
+/// ifil is >= 2.04, see `SF2SpecVersion`): zone override rules and 8.1.3 range clamping, the 2.01
+/// default modulators plus file modulators, chapter 9 channel functions (sustain / sostenuto / soft
+/// pedal, RPN 0 and NRPN, all-notes/sound-off, reset controllers, program change, channel and poly
+/// pressure), exclusive classes, the 2.01 filter Q rule, linear pan, triangle LFOs, key-number
+/// envelope scaling, and reverb / chorus sends (see docs/SF2_COMPLIANCE.md).
 public enum SF2Fidelity: Sendable { case gbk, spec }
 
 /// One modulator (sfModList record). `src` / `amtSrc` are raw SFModulator words.

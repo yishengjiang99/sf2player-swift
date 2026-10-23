@@ -326,7 +326,7 @@ public final class SF2SoundFont: @unchecked Sendable {
     }
 
     /// Cached `buildRegionsForPreset(index, {decodeToFloat32, normalize, includeStereoLinks: true})`.
-    /// `.spec` builds SoundFont 2.04 regions (zone override rules, modulators); `.gbk` is gbk's merge.
+    /// `.spec` builds SoundFont 2.01 regions (zone override rules, range clamping, modulators); `.gbk` is gbk's merge.
     public func regionList(forPreset index: Int, fidelity: SF2Fidelity = .gbk) throws -> SF2RegionList {
         cacheLock.lock()
         if let hit = (fidelity == .spec ? specRegionCache : regionCache)[index] { cacheLock.unlock(); return hit }
@@ -401,7 +401,7 @@ public final class SF2SoundFont: @unchecked Sendable {
         return out
     }
 
-    // MARK: - SoundFont 2.04 build (SF2Fidelity.spec)
+    // MARK: - SoundFont 2.01 build (SF2Fidelity.spec)
 
     /// Generators a preset zone may not set (8.1.2/8.1.3: sample offsets, ids, sampleModes, ...).
     static let instrumentOnlyGens: Set<Int> = [Gen.startAddrsOffset, Gen.endAddrsOffset, Gen.startloopAddrsOffset,
