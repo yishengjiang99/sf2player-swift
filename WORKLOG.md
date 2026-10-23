@@ -67,3 +67,4 @@ Saved as /workspace/sf2-baseline.txt (box only; may be lost).
   - Compliance SpecRender and the SpecFidelity helper turn it off and set gain to 0 dB. SF2OfflineRenderer gained `masterDynamicsEnabled` and `masterGainDb` parameters.
   - The sf2-spec-render WAV writer clamps to +/-1 before int16.
 - swift test: 138 tests, 0 failures, 4 skipped.
+- CI fix: GU parse expected values (testGeneralUserGSMatchesGbkParse, skipped locally before) now match gbk 2.01 values (81 regions, attack -12000, 1_113_969 points, violin 145); G11 temp-engine use-after-free fixed (failed on macOS).

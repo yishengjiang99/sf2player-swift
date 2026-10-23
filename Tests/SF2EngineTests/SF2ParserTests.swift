@@ -125,22 +125,23 @@ final class SF2ParserTests: XCTestCase {
         XCTAssertEqual(sf.shdr.count, 921)
         XCTAssertEqual(sf.samples.count, 16_048_567)
         XCTAssertEqual(sf.phdr[0].presetName, "Marimba")
-        // values printed by gbk parseSF2 / buildRegionsForPreset(0)
+        // values printed by gbk (eee3c44, 2.01 port) SF2SoundFont.buildRegionsForPreset(0). gbk-legacy: 152 regions
+        // (preset-zone key/velocity ranges ignored, every split layered), attack -16332 tc (unclamped), 1_881_468 points, violin 156.
         let r = try sf.buildRegionsForPreset(0)
-        XCTAssertEqual(r.count, 152)
+        XCTAssertEqual(r.count, 81)
         XCTAssertEqual(r[0].keyRange.1, 48); XCTAssertEqual(r[0].velRange.0, 121)
         XCTAssertEqual(r[0].sample.dataL.count, 17464)
         XCTAssertEqual(r[0].sample.loopStart, 17230); XCTAssertEqual(r[0].sample.loopEnd, 17400)
         XCTAssertEqual(r[0].fineTune, 18)
-        XCTAssertEqual(r[0].volEnv, SF2VolEnv(delayTc: -12000, attackTc: -16332, holdTc: -498, decayTc: 3916, sustainCb: 1000, releaseTc: 3916))
+        XCTAssertEqual(r[0].volEnv, SF2VolEnv(delayTc: -12000, attackTc: -12000, holdTc: -498, decayTc: 3916, sustainCb: 1000, releaseTc: 3916))
         XCTAssertEqual(r[0].initialFilterFcCents, 11810)
         XCTAssertEqual(r[0].sample.dataL[100], -0.000213623046875)
         XCTAssertNil(r[0].sample.dataR)
-        XCTAssertEqual(r.reduce(0) { $0 + $1.sample.dataL.count }, 1_881_468)
+        XCTAssertEqual(r.reduce(0) { $0 + $1.sample.dataL.count }, 1_113_969)
         let violin = sf.resolvePresetIndex(program: 40, bank: 0)
         XCTAssertEqual(violin, 33)
         XCTAssertEqual(sf.presetName(33), "Violin")
-        XCTAssertEqual(try sf.buildRegionsForPreset(33).count, 156)
+        XCTAssertEqual(try sf.buildRegionsForPreset(33).count, 145)
         XCTAssertNotNil(sf.info["ICMT"]?.range(of: "License v2.0"))
     }
 
