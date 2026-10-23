@@ -55,7 +55,7 @@ final class ComplianceG11Tests: XCTestCase {
         XCTAssertGreaterThan(try tail(true), -80)
         XCTAssertLessThan(try tail(false), -200)
 
-        // gbk output never carries effects
-        XCTAssertFalse(Sf2SynthEngine(outSr: 44100).st.pointee.spec)
+        // .gbk is an alias of .spec: every engine renders the 2.01 model (effects included)
+        XCTAssertTrue(Sf2SynthEngine(outSr: 44100).st.pointee.spec)
     }
 }

@@ -207,7 +207,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         var freeCount: Int
         var tracks: UnsafeMutablePointer<TrackRT>
         var store: UnsafeMutablePointer<SF2RegionStore.Header>
-        var spec = false
+        var spec = true
         var chans: UnsafeMutablePointer<ChannelRT>
         /// 16 x 128 controller values.
         var ccs: UnsafeMutablePointer<UInt8>
@@ -219,6 +219,11 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         var revL = 0.0, revR = 0.0, choL = 0.0, choR = 0.0
         var fx: SF2EffectsRT
         var fxOn = true
+        /// Master bus (non-normative), applied in renderRange / renderScheduled for every fidelity.
+        var master: MasterBusRT
+        var masterOn = true
+        var masterGainDb = -3.0
+        var masterGain = pow(10, -3.0 / 20)
     }
 
     public let outSr: Double
@@ -253,7 +258,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         programs.initialize(repeating: -1, count: 129 * 128)
         st = .allocate(capacity: 1)
         st.initialize(to: State(maxVoices: mv, capacity: cap, voices: voices, order: order, free: free, freeCount: cap,
-                                tracks: tracks, store: store.hdr, chans: chans, ccs: ccs, nrpn: nrpn, poly: poly, programs: programs, fx: SF2EffectsRT(sr: outSr)))
+                                tracks: tracks, store: store.hdr, chans: chans, ccs: ccs, nrpn: nrpn, poly: poly, programs: programs, fx: SF2EffectsRT(sr: outSr), master: MasterBusRT(sampleRate: outSr)))
         resetChannelsRT()
     }
 
@@ -264,15 +269,16 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         s.tracks.deinitialize(count: Self.maxTracks); s.tracks.deallocate()
         s.chans.deallocate(); s.ccs.deallocate(); s.nrpn.deallocate(); s.poly.deallocate(); s.programs.deallocate()
         s.fx.free()
+        s.master.free()
         st.deinitialize(count: 1); st.deallocate()
     }
 
     // MARK: - gbk-shaped API (tests, offline)
 
-    /// Rendering rules (default `.gbk`). Set before rendering (not real-time safe to change mid-note).
+    /// Rendering rules: always `.spec` (`.gbk` is an alias). Set before rendering (not real-time safe to change mid-note).
     public var fidelity: SF2Fidelity {
-        get { st.pointee.spec ? .spec : .gbk }
-        set { st.pointee.spec = newValue == .spec }
+        get { .spec }
+        set { st.pointee.spec = true }
     }
 
     /// Current controller value on a MIDI channel (`.spec` state).
@@ -1085,6 +1091,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         for i in 0 ..< count {
             var (l, r) = renderFrame(ccPanPos)
             if fx { let w = takeSends(); l += w.0; r += w.1 } else { clearSends() }
+            (l, r) = applyMaster(l, r)
             outL[i] = Float(l)
             outR[i] = Float(r)
         }
@@ -1099,7 +1106,34 @@ public final class Sf2SynthEngine: @unchecked Sendable {
     }
 
     /// Clears the built-in reverb / chorus state. Call while not rendering.
-    public func resetEffects() { st.pointee.fx.clear() }
+    public func resetEffects() { st.pointee.fx.clear(); st.pointee.master.reset() }
+
+    /// Master gain in dB (default -3 dB). It applies whether or not the dynamics are enabled. Set while not rendering.
+    public var masterGainDb: Double {
+        get { st.pointee.masterGainDb }
+        set { st.pointee.masterGainDb = newValue; st.pointee.masterGain = pow(10, newValue / 20) }
+    }
+    /// Master-bus dynamics (compressor, lookahead limiter, safety clip), on by default. Set while not rendering.
+    public var masterDynamicsEnabled: Bool {
+        get { st.pointee.masterOn }
+        set { st.pointee.masterOn = newValue }
+    }
+    public var masterParams: MasterBusParams {
+        get { st.pointee.master.params }
+        set { st.pointee.master.setParams(newValue) }
+    }
+    public var masterLatencyFrames: Int { st.pointee.master.latencyFrames }
+    public var masterGainReductionDb: Double { st.pointee.master.gainReductionDb }
+
+    @inline(__always) private func applyMaster(_ l: Double, _ r: Double) -> (Double, Double) {
+        let s = st
+        let g = s.pointee.masterGain
+        if s.pointee.masterOn {
+            s.pointee.master.process(l * g, r * g)
+            return (s.pointee.master.outL, s.pointee.master.outR)
+        }
+        return (l * g, r * g)
+    }
 
     @inline(__always) private func clearSends() {
         st.pointee.revL = 0; st.pointee.revR = 0; st.pointee.choL = 0; st.pointee.choR = 0
@@ -1158,6 +1192,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
             }
             var (l, r) = renderFrame(ccPanPos)
             if fx { let w = takeSends(); l += w.0; r += w.1 } else { clearSends() }
+            (l, r) = applyMaster(l, r)
             outL[i] = Float(l)
             outR[i] = Float(r)
             rendered += 1

@@ -33,7 +33,7 @@ final class SF2ParserTests: XCTestCase {
         XCTAssertEqual(sf.inst.last?.instName, "EOI")
     }
 
-    func testRegionMergeFollowsGbkRules() throws {
+    func testRegionMergeFollowsSpecRules() throws {
         let sf = try SF2SoundFont(data: basicBank().build())
         let regions = try sf.buildRegionsForPreset(0)
         XCTAssertEqual(regions.count, 2)
@@ -59,8 +59,8 @@ final class SF2ParserTests: XCTestCase {
         let b = regions[1]
         XCTAssertEqual(b.sample.end, 190, "startAddrsOffset trims the copy")
         XCTAssertEqual(b.sample.loopStart, 40)
-        XCTAssertEqual(b.modEnv.sustain, 0.25)
-        XCTAssertEqual(b.initialFilterFcCents, 13500, "sub-1500 cutoff sanitized to open")
+        XCTAssertEqual(b.modEnv.sustain, 0.75, "2.01 #29: sustainModEnv 250 = 25 % below full scale (gbk-legacy read it as a level)")
+        XCTAssertEqual(b.initialFilterFcCents, 1500, "E-03: clamped to the 8.1.3 minimum (gbk-legacy opened the filter)")
         XCTAssertEqual(b.sampleModes, 0)
     }
 
@@ -70,7 +70,7 @@ final class SF2ParserTests: XCTestCase {
         bank.instruments[0].1[2].gens.insert((Gen.startAddrsOffset, -20), at: 0) // overridden later in-zone (last wins)
         bank.instruments[0].1.append(.init(gens: [(Gen.startAddrsCoarseOffset, -1), (Gen.sampleID, 0)])) // wraps -> clamps -> dropped
         let regions = try SF2SoundFont(data: bank.build()).buildRegionsForPreset(0)
-        XCTAssertEqual(regions.count, 2)
+        XCTAssertEqual(regions.count, 3, "S-03: a negative coarse offset clamps to the sample start; the zone is kept (gbk-legacy dropped it)")
         XCTAssertEqual(regions[0].sampleModes, 0)
         XCTAssertEqual(regions[0].sample.loopStart, 0)
         XCTAssertEqual(regions[0].sample.loopEnd, regions[0].sample.end)
@@ -84,8 +84,9 @@ final class SF2ParserTests: XCTestCase {
         bank.sampleHeaders[0].link = 1
         bank.sampleHeaders.append(.init(name: "right", start: 246, end: 346, loopStart: 250, loopEnd: 340, link: 0, type: 2))
         let r = try SF2SoundFont(data: bank.build()).buildRegionsForPreset(0)[0]
-        XCTAssertEqual(r.sample.dataR?.count, 100)
-        XCTAssertEqual(r.sample.dataR?[0], 1.0)
+        // S-10: stereo is one voice per zone (each zone plays its own sample), so no right buffer is
+        // attached. gbk-legacy loaded the linked sample as dataR.
+        XCTAssertNil(r.sample.dataR)
     }
 
     func testSampleBuffersAreSharedAcrossIdenticalRanges() throws {
