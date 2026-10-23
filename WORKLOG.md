@@ -38,3 +38,10 @@ Saved as /workspace/sf2-baseline.txt (box only; may be lost).
   ASan run of the fuzz test: no memory errors; LeakSanitizer reports 873 bytes in XCTest's own
   test-registration closures (run with ASAN_OPTIONS=detect_leaks=0 to silence).
 - Chunk 5: G-03/G-04 spec envelopes (VolEnv/ModEnv `spec` flag; gbk curves untouched), fastRelease/kill.
+- Chunk 6: MIDI-02..08, N-01..06, M-11, G-02, G-12 (engine channel functions, NRPN, new events
+  programChange / channelPressure / polyPressure, `loadPrograms(from:)`).
+- Chunk 7: G-05..G-08, G-13, S-09, S-10. Filter Q per 8.1.2 #9 (DC -Q/2, peak +Q/2) with bypass at
+  Fc >= min(20 kHz, 0.45 sr) and Q <= 0; LFOs always run in .spec; timecent sums clamped to 8.1.3
+  (so -32768 tc in synthetic test regions now means 1 ms: two SpecFidelityTests sample indices moved,
+  expected values unchanged; testFilterQFromRegion expects the new q formula). Stereo pairs: one
+  voice per zone, left zone takes the right zone's pitch.

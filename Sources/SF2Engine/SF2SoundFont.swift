@@ -487,6 +487,7 @@ public final class SF2SoundFont: @unchecked Sendable {
             pg[Gen.instrument] = nil
             let io = specObject(bags: ibag, gens: igen, mods: imod, from: inst[instIndex].instBagNdx,
                                 to: inst[instIndex + 1].instBagNdx, preset: false)
+            var batch: [SpecZone] = []
             for iz in io.locals {
                 var g = io.global?.gens ?? [:]
                 for (k, v) in iz.gens { g[k] = v }
@@ -503,8 +504,36 @@ public final class SF2SoundFont: @unchecked Sendable {
                 let mods = SF2Modulator.merge(instGlobal: io.global?.mods ?? [], instLocal: iz.mods,
                                               presetGlobal: p.global?.mods ?? [], presetLocal: pz.mods,
                                               version: specVersion)
-                out.append(SpecZone(gens: g, mods: mods))
+                batch.append(SpecZone(gens: g, mods: mods))
             }
+            out += linkStereoPitch(batch)
+        }
+        return out
+    }
+
+    /// S-10 (7.10): a valid stereo pair (left type 4 <-> right type 2, links pointing at each other,
+    /// same rate, both used by zones of the same instrument) plays as two voices, each zone its own
+    /// sample and pan, both with the pitch of the right sample's zone. Invalid links play mono.
+    func linkStereoPitch(_ zones: [SpecZone]) -> [SpecZone] {
+        var out = zones
+        let n = shdr.count - 1
+        for i in out.indices {
+            guard let sid = out[i].gens[Gen.sampleID], sid >= 0, sid < n else { continue }
+            let l = shdr[sid]
+            guard l.sampleType & 0x7FFF == 4, l.sampleLink >= 0, l.sampleLink < n else { continue }
+            let r = shdr[l.sampleLink]
+            guard r.sampleType & 0x7FFF == 2, r.sampleLink == sid, r.sampleRate == l.sampleRate else { continue }
+            guard let j = zones.firstIndex(where: { z in
+                z.gens[Gen.sampleID] == l.sampleLink
+                    && Self.intersectRange(z.gens[Gen.keyRange] ?? 0x7F00, out[i].gens[Gen.keyRange] ?? 0x7F00) != nil
+                    && Self.intersectRange(z.gens[Gen.velRange] ?? 0x7F00, out[i].gens[Gen.velRange] ?? 0x7F00) != nil
+            }) else { continue }
+            let rz = zones[j].gens
+            for k in [Gen.coarseTune, Gen.scaleTuning] { out[i].gens[k] = rz[k] }
+            // Root key and correction of the right sample (makeRegion adds the left sample's correction).
+            let rRoot = rz[Gen.overridingRootKey].flatMap { (0 ... 127).contains($0) ? $0 : nil } ?? (r.originalPitch > 127 ? 60 : r.originalPitch)
+            out[i].gens[Gen.overridingRootKey] = rRoot
+            out[i].gens[Gen.fineTune] = (rz[Gen.fineTune] ?? 0) + r.pitchCorrection - l.pitchCorrection
         }
         return out
     }
@@ -573,7 +602,8 @@ public final class SF2SoundFont: @unchecked Sendable {
 
         let dataL = sampleBuffer(start, end, normalize: normalize)
         var dataR: SF2SampleBuffer?
-        if includeStereoLinks, sh.sampleLink != 0, sh.sampleLink < shdr.count {
+        // S-10: .spec never folds the partner into this voice (each zone is its own voice).
+        if includeStereoLinks, !spec, sh.sampleLink != 0, sh.sampleLink < shdr.count {
             let other = shdr[sh.sampleLink]
             if other.sampleRate == sh.sampleRate {
                 let sR = clampU32(other.start, 0, n), eR = clampU32(other.end, 0, n)
@@ -635,6 +665,9 @@ public final class SF2SoundFont: @unchecked Sendable {
             region.keynumOverride = g[Gen.keynum].flatMap { (0 ... 127).contains($0) ? $0 : nil }
             region.velocityOverride = g[Gen.velocity].flatMap { (0 ... 127).contains($0) ? $0 : nil }
         }
+        // S-09 loop policy (both modes): a loop needs loopEnd - loopStart >= 2 inside the sample, else the
+        // zone plays unlooped. 7.10's 48-point / 32-point-loop / 8-guard-point recommendations are not
+        // enforced (looping such samples is allowed; "may optionally not loop").
         if !(region.sample.loopEnd > region.sample.loopStart + 1) {
             region.sampleModes = 0
             region.sample.loopStart = 0

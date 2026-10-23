@@ -44,22 +44,22 @@ every test named must exist under `Tests/`; status must be `pass`, `n/a (reason)
 | S-06 | §8.1.2 #58 | overridingRootKey −1/absent → header key | test_S06_overridingRootKeyMinusOneUsesHeader | pass |
 | S-07 | §7.10 | chPitchCorrection signed cents (−4 example) | test_S07_pitchCorrection, test_S07_pitchCorrectionMeasured | pass |
 | S-08 | §8.1.2 #54, §9.1.2, §6.2 | sampleModes low 2 bits; mode 3 loops while held then plays to end | test_S08_sampleModesLowBits | pass |
-| S-09 | §7.10 | Loop sanity policy explicit and tested | test_S09_loopSanityPolicy | pending |
-| S-10 | §7.10 | Stereo pairs: one voice per zone, own pan, pitch from right zone; invalid link → mono | test_S10_stereoPairsOneVoicePerZone | pending |
+| S-09 | §7.10 | Loop sanity policy: loop iff loopEnd − loopStart ≥ 2 inside the sample; 48/32/8-point recommendations not enforced (“may”) | test_S09_loopSanityPolicy | pass |
+| S-10 | §7.10 | Stereo pairs: one voice per zone, own pan, pitch from right zone; invalid link → mono | test_S10_stereoPairsOneVoicePerZone | pass |
 | S-11 | §6.1 | Reads past end yield silence | test_S11_readPastEndIsSilent | pass |
 | G-01 | §9.1.1, §8.1.2 #51/52/56/58 | Pitch formula, measured f0 ±1 cent | test_G01_measuredPitch | pass |
 | G-02 | §8.1.1, §8.1.2 #46/47 | keynum / velocity substitution generators | test_G02_keynumVelocitySubstitution | pass |
 | G-03 | §8.1.2 #33–40, §9.1.7 | Volume envelope shape and timing | test_G03_volumeEnvelopeShape, test_G03_releaseFromAttackUsesCurrentLevel | pass |
 | G-04 | §8.1.2 #25–32 | Modulation envelope shape and timing (shape asserted on ModEnv directly; audio check via modEnvToPitch at sustain)| test_G04_modulationEnvelopeShape | pass |
-| G-05 | §8.1.2 #31/32/39/40 | Key-number envelope scaling (erratum: #32/#40 say hold, mean decay) | test_G05_keynumEnvelopeScaling | pending |
-| G-06 | §8.1.2 #21–24, §9.1.6 | Triangle LFOs, phase and frequency | test_G06_lfoTriangleFrequencyAndPhase | pending |
-| G-07 | §8.1.2 #7/#11 | modEnvToPitch / modEnvToFilterFc | test_G07_modEnvToPitchAndFc | pending |
-| G-08 | §8.1.2 #8/#9, §9.1.3 | Resonant LPF, DC gain −Q/2, bypass above 20 kHz with Q ≤ 0 (±1 dB) | test_G08_filterDcAndPeak | pending |
+| G-05 | §8.1.2 #31/32/39/40 | Key-number envelope scaling (erratum: #32/#40 say hold, mean decay) | test_G05_keynumEnvelopeScaling | pass |
+| G-06 | §8.1.2 #21–24, §9.1.6 | Triangle LFOs, phase and frequency | test_G06_lfoTriangleFrequencyAndPhase | pass |
+| G-07 | §8.1.2 #7/#11 | modEnvToPitch / modEnvToFilterFc | test_G07_modEnvToPitchAndFc | pass |
+| G-08 | §8.1.2 #8/#9, §9.1.3 | Resonant LPF, DC gain −Q/2, bypass above 20 kHz with Q ≤ 0 (±1 dB) | test_G08_filterDcAndPeak | pass |
 | G-09 | §8.1.2 #48 | initialAttenuation cB | test_G09_initialAttenuation | pass |
 | G-10 | §8.1.2 #17 | Linear pan law (L/(L+R) ±0.0058 ≈ 0.1 dB) | test_G10_linearPanLaw | pass |
 | G-11 | §8.1.2 #15/#16, §9.1.5 | Reverb/chorus sends and aux buses | test_G11_effectsSends | pending |
 | G-12 | §8.1.2 #57 | exclusiveClass: fast release, same preset + channel | test_G12_exclusiveClassFastReleaseSamePresetChannel | pass |
-| G-13 | §8.1.3 | Non-real-time generators fixed at note-on | test_G13_nonRealtimeGeneratorsFixedAtNoteOn | pending |
+| G-13 | §8.1.3 | Non-real-time generators fixed at note-on | test_G13_nonRealtimeGeneratorsFixedAtNoteOn | pass |
 | M-01 | §8.2, §8.2.4 | Source word layout; type > 3 → ignore modulator | test_M01_sourceLayoutAndUnknownType | pass |
 | M-02 | §8.2.1 | Undefined general / illegal CC sources → ignore modulator | test_M02_illegalSourcesIgnored | pass |
 | M-03 | §8.2.1 | No-controller source outputs 1 | test_M03_noControllerIsOne | pass |

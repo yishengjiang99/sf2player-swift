@@ -87,8 +87,9 @@ final class SpecFidelityTests: XCTestCase {
         XCTAssertEqual(firstVoice(e).regionPanPos, -1, accuracy: 1e-12)
         var l = [Float](repeating: 0, count: 64), r = [Float](repeating: 0, count: 64)
         e.renderRange(&l, &r)
-        XCTAssertGreaterThan(abs(l[10]), 0.1)
-        XCTAssertEqual(r[10], 0, accuracy: 1e-6)
+        // .spec clamps delay/attack -32768 tc to the 8.1.3 minimum -12000 (1 ms each): measure after 2 ms.
+        XCTAssertGreaterThan(abs(l[60]), 0.1)
+        XCTAssertEqual(r[60], 0, accuracy: 1e-6)
     }
 
     func testPitchBendDefaultRangeAndRPN0() {
@@ -148,7 +149,9 @@ final class SpecFidelityTests: XCTestCase {
         let e = specEngine([reg])
         noteOn(e)
         let v = firstVoice(e)
-        XCTAssertEqual(v.lpf.q, pow(10, (12 - 3.01) / 20), accuracy: 1e-9)
+        // G-08: peak/DC = 10^(Q/200) -> RBJ q^2 = (G^2 + G sqrt(G^2 - 1)) / 2 (was the FluidSynth-style 10^((Q/10 - 3.01)/20)).
+        let g = pow(10, 120.0 / 200)
+        XCTAssertEqual(v.lpf.q, ((g * g + g * (g * g - 1).squareRoot()) / 2).squareRoot(), accuracy: 1e-9)
         // 0 cB stays Butterworth with unity compensation.
         let e0 = specEngine()
         noteOn(e0)
@@ -204,7 +207,8 @@ final class SpecOfflineTests: XCTestCase {
                                                             fidelity: .spec)
         // gbk ignores CC7 events; spec scales by the Table 2 concave CC7 law after frame 100.
         XCTAssertEqual(gbk.left[50], gbk.left[300], accuracy: 1e-6)
-        XCTAssertEqual(Double(spec.left[300] / spec.left[50]), t2Gain(50) / t2Gain(100), accuracy: 1e-4)
+        // frame 95: after the 1 ms delay + 1 ms attack (-32768 tc clamped to -12000 in .spec).
+        XCTAssertEqual(Double(spec.left[300] / spec.left[95]), t2Gain(50) / t2Gain(100), accuracy: 1e-4)
     }
 }
 

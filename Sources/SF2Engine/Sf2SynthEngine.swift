@@ -172,6 +172,8 @@ struct Voice {
     var keyDown = true, deferred = false, sostenuto = false
     var list: Int32 = -1
     var effKey: Int32 = 0, effVel: Int32 = 0
+    /// G-08: resonance in cB and whether the filter is out of circuit (Fc >= 20 kHz / 0.45 sr with Q <= 0).
+    var qCb = 0.0
 
     init(sr: Double) {
         volEnv = VolEnv(sr: sr); modEnv = ModEnv(sr: sr); modLfo = LFO(sr: sr); vibLfo = LFO(sr: sr); lpf = TwoPoleLPF(sr: sr)
@@ -782,10 +784,14 @@ public final class Sf2SynthEngine: @unchecked Sendable {
     /// Applies the modulated values that may change while the note sounds (CC / pitch wheel sources).
     @inline(__always) private func applyLive(_ v: inout Voice, _ d: UnsafeMutablePointer<Double>) {
         let qCb = max(0, min(960, v.regQ + d[9]))
-        let q = pow(10, (qCb / 10 - 3.01) / 20)
+        // G-08 (8.1.2 #9): Q cB is the resonance peak height above the DC gain, and the DC gain is
+        // reduced by Q/2. The 2-pole RBJ low-pass whose peak/DC ratio is G = 10^(Q/200) has
+        // q^2 = (G^2 + G sqrt(G^2 - 1)) / 2 (q = 1/sqrt 2 at Q = 0: no peak).
+        let gq = pow(10, qCb / 200)
+        let q = ((gq * gq + gq * (gq * gq - 1).squareRoot()) / 2).squareRoot()
         if q != v.lpf.q { v.lpf.q = q; v.lastFc = .nan }
-        // Resonance gain compensation relative to Butterworth (FluidSynth: 1/sqrt(q)).
-        let filterGain = 1 / (q / 0.7071).squareRoot()
+        v.qCb = qCb
+        let filterGain = pow(10, -qCb / 400)
         v.baseGain = cbAttenToLin(max(0, min(1440, v.regAtten + d[48]))) * filterGain
         v.regionPanPos = max(-500, min(500, v.regPan + d[17])) / 500
         // M-12 / Z-11: modulated destinations are re-clamped to their 8.1.3 range on every evaluation.
@@ -827,25 +833,35 @@ public final class Sf2SynthEngine: @unchecked Sendable {
             evalMods(voice, d)
             // Note-on-only destinations: sample start, LFO / envelope timing, key-number scaling.
             let keyDelta = Double(60 - note)
-            @inline(__always) func tc(_ base: Int, _ add: Double) -> Int { Int((Double(base) + add).rounded()) }
+            // M-12: every summed value is re-clamped to its 8.1.3 range (key scaling is part of the sum).
+            @inline(__always) func tc(_ base: Int, _ add: Double, _ id: Int) -> Int { Int(GenInfo.clamp(id, Double(base) + add).rounded()) }
+            let kVH = GenInfo.clamp(39, Double(reg.keynumToVolEnvHold) + d[39]), kVD = GenInfo.clamp(40, Double(reg.keynumToVolEnvDecay) + d[40])
+            let kMH = GenInfo.clamp(31, Double(reg.keynumToModEnvHold) + d[31]), kMD = GenInfo.clamp(32, Double(reg.keynumToModEnvDecay) + d[32])
             var ve = reg.volEnv
-            ve.delayTc = tc(ve.delayTc, d[33]); ve.attackTc = tc(ve.attackTc, d[34])
-            ve.holdTc = tc(ve.holdTc, d[35] + Double(reg.keynumToVolEnvHold) * keyDelta)
-            ve.decayTc = tc(ve.decayTc, d[36] + Double(reg.keynumToVolEnvDecay) * keyDelta)
-            ve.sustainCb = max(0, min(1440, tc(ve.sustainCb, d[37]))); ve.releaseTc = tc(ve.releaseTc, d[38])
+            ve.delayTc = tc(ve.delayTc, d[33], 33); ve.attackTc = tc(ve.attackTc, d[34], 34)
+            ve.holdTc = tc(ve.holdTc, d[35], 35) + Int((kVH * keyDelta).rounded())
+            ve.decayTc = tc(ve.decayTc, d[36], 36) + Int((kVD * keyDelta).rounded())
+            ve.sustainCb = tc(ve.sustainCb, d[37], 37); ve.releaseTc = tc(ve.releaseTc, d[38], 38)
             voice.volEnv.spec = true
             voice.volEnv.setFromSf2(ve)
             var me = reg.modEnv
-            me.delayTc = tc(me.delayTc, d[25]); me.attackTc = tc(me.attackTc, d[26])
-            me.holdTc = tc(me.holdTc, d[27] + Double(reg.keynumToModEnvHold) * keyDelta)
-            me.decayTc = tc(me.decayTc, d[28] + Double(reg.keynumToModEnvDecay) * keyDelta)
-            me.sustain = max(0, min(1, me.sustain - d[29] / 1000)); me.releaseTc = tc(me.releaseTc, d[30])
+            me.delayTc = tc(me.delayTc, d[25], 25); me.attackTc = tc(me.attackTc, d[26], 26)
+            me.holdTc = tc(me.holdTc, d[27], 27) + Int((kMH * keyDelta).rounded())
+            me.decayTc = tc(me.decayTc, d[28], 28) + Int((kMD * keyDelta).rounded())
+            me.sustain = max(0, min(1, me.sustain - d[29] / 1000)); me.releaseTc = tc(me.releaseTc, d[30], 30)
             voice.modEnv.spec = true
             voice.modEnv.setFromSf2(me)
-            voice.modLfo.set(freqHz: fcCentsToHz(Double(reg.modLfoFreqCents) + d[22]),
-                             delaySec: timecentsToSeconds(Double(reg.modLfoDelayTc) + d[21]))
-            voice.vibLfo.set(freqHz: fcCentsToHz(Double(reg.vibLfoFreqCents) + d[24]),
-                             delaySec: timecentsToSeconds(Double(reg.vibLfoDelayTc) + d[23]))
+            // G-06: LFO frequency clamped to the useful 1 mHz ... 100 Hz.
+            voice.modLfo.set(freqHz: max(0.001, min(100, fcCentsToHz(GenInfo.clamp(22, Double(reg.modLfoFreqCents) + d[22])))),
+                             delaySec: timecentsToSeconds(GenInfo.clamp(21, Double(reg.modLfoDelayTc) + d[21])))
+            voice.vibLfo.set(freqHz: max(0.001, min(100, fcCentsToHz(GenInfo.clamp(24, Double(reg.vibLfoFreqCents) + d[24])))),
+                             delaySec: timecentsToSeconds(GenInfo.clamp(23, Double(reg.vibLfoDelayTc) + d[23])))
+            // G-13: scaleTuning (#56) is a non-real-time generator: modulators apply at note-on only.
+            if d[56] != 0 {
+                let st0 = Double(reg.scaleTuning), st1 = GenInfo.clamp(56, st0 + d[56])
+                voice.baseRate *= centsToRatio(Double(note - reg.root) * (st1 - st0))
+                voice.baseRate0 = voice.baseRate
+            }
             voice.modLfo.triangle = true; voice.vibLfo.triangle = true
             applyLive(&voice, d)
             voice.lpf.setCutoffHz(fcCentsToHz(voice.initialFc))
@@ -1000,9 +1016,10 @@ public final class Sf2SynthEngine: @unchecked Sendable {
                 continue
             }
             let modEnv = v.pointee.modEnv.next()
-            let needModLfo = v.pointee.modToPitch != 0 || v.pointee.modLfoToFc != 0 || v.pointee.modLfoToVol != 0
+            // .spec (G-06): LFOs run from note-on whatever their depth (depth may be modulated later).
+            let needModLfo = v.pointee.spec || v.pointee.modToPitch != 0 || v.pointee.modLfoToFc != 0 || v.pointee.modLfoToVol != 0
             let modLfo = needModLfo ? v.pointee.modLfo.next() : 0
-            let vibLfo = v.pointee.vibToPitch != 0 ? v.pointee.vibLfo.next() : 0
+            let vibLfo = v.pointee.spec || v.pointee.vibToPitch != 0 ? v.pointee.vibLfo.next() : 0
             var pitchCents = vibLfo * v.pointee.vibToPitch + modLfo * v.pointee.modToPitch
             if v.pointee.modEnvToPitch != 0 { pitchCents += modEnv * v.pointee.modEnvToPitch }
             v.pointee.rate = pitchCents == 0 ? v.pointee.baseRate : v.pointee.baseRate * centsToRatio(pitchCents)
@@ -1015,8 +1032,13 @@ public final class Sf2SynthEngine: @unchecked Sendable {
                 v.pointee.lpf.setCutoffHz(fcCentsToHz(fcCents))
                 v.pointee.lastFc = fcCents
             }
-            let fL = v.pointee.lpf.processL(sL)
-            let fR = v.pointee.lpf.processR(sR)
+            let fL: Double, fR: Double
+            if v.pointee.spec && v.pointee.qCb <= 0 && fcCentsToHz(fcCents) >= min(20000, 0.45 * outSr) {
+                fL = sL; fR = sR                               // G-08: bypassed, flat
+            } else {
+                fL = v.pointee.lpf.processL(sL)
+                fR = v.pointee.lpf.processR(sR)
+            }
             let env = v.pointee.volEnv.next()
             var gain = v.pointee.baseGain * env * v.pointee.trackVolumeMul
             if v.pointee.modLfoToVol != 0 { gain *= cbAttenToLin(-modLfo * v.pointee.modLfoToVol) }
