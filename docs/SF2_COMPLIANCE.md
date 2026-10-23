@@ -2,7 +2,7 @@
 
 Reference: SoundFont 2.01 Technical Specification, July 23 1998 (`sfspec21.pdf`). Scope: the
 `SF2Fidelity.spec` path with `SF2LoadOptions.strict`. `.gbk` is now an alias of `.spec`. The gbk JS engine
-was re-ported from this engine, and the pin is gbk `eee3c440335b9fa1772a02acb041871c357e44d8` (branch `sf2-201-compliance`, PR yishengjiang99/gbk#38).
+was re-ported from this engine, and the pin is gbk `305615f3561d703784f1c7fe2784cc9f14d4c0e4` (branch `sf2-201-compliance`, PR yishengjiang99/gbk#38).
 Its docs/SF2_COMPLIANCE.md uses the same IDs and test names. Cross-engine parity tolerance is 1e-6 per sample;
 the worst observed on Linux is 2.3e-10.
 

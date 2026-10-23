@@ -68,3 +68,11 @@ Saved as /workspace/sf2-baseline.txt (box only; may be lost).
   - The sf2-spec-render WAV writer clamps to +/-1 before int16.
 - swift test: 138 tests, 0 failures, 4 skipped.
 - CI fix: GU parse expected values (testGeneralUserGSMatchesGbkParse, skipped locally before) now match gbk 2.01 values (81 regions, attack -12000, 1_113_969 points, violin 145); G11 temp-engine use-after-free fixed (failed on macOS).
+
+## 2026-10-22 (pre-merge fixes, mirrors gbk 305615f)
+- `.spec` track CC7/CC10/CC11 now reach the audio: engine-wide `.setControllers` writes all 16 channels' controller
+  state; track values (non-default `SF2TrackState` / `setTrackRT`, or any track `.setControllers` CC) are written into
+  each channel the track plays on (first noteOn per channel, then live), through the 2.01 default modulators.
+  Power-on defaults never clobber in-stream CCs, so SF2Player plans (100/64/127) render unchanged.
+- sf2-parity-render reads track cc7Volume/cc10Pan/cc11Expression and setControllers events.
+- TrackControllersTests (5). gbk pin -> 305615f. 143 tests, 0 failures locally; GU parity 22 scenarios worst 1.4e-14.

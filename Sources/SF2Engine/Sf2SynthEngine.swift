@@ -127,7 +127,14 @@ public struct TrackRT {
     public var present = false
     public var list: Int32 = -1
     public var cc7 = 100.0, cc10 = 64.0, cc11 = 127.0, pan = 0.0, gain = 1.0
+    /// `.spec`: the track's CC7/CC10/CC11 override the channel controller state of every channel it plays
+    /// on (`chanMask`), so they act through the 2.01 default modulators. Set for non-default initial values
+    /// (power-on defaults are already the channel state) and by any track `.setControllers` CC.
+    public var ccSet = false
+    public var chanMask: UInt16 = 0
     public init() {}
+    /// Whether the CCs differ from the MIDI power-on defaults (100 / 64 / 127).
+    public var hasNonDefaultCcs: Bool { cc7 != 100 || cc10 != 64 || cc11 != 127 }
 }
 
 /// MIDI channel state (`.spec`): controllers, pitch wheel, RPN 0 bend range, channel preset.
@@ -366,6 +373,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
             r.cc11 = max(0, min(127, t.cc11Expression ?? 127))
             r.pan = max(-1, min(1, t.pan ?? 0))
             r.gain = max(0, t.gain ?? 1)
+            r.ccSet = r.hasNonDefaultCcs
             return (t.trackIndex, r)
         }
         resetTracksRT()
@@ -428,6 +436,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
 
     /// MIDI power-on channel state: CC7 100, CC10 64, CC11 127, others 0; bend center, range 2 semitones.
     public func resetChannelsRT() {
+        st.pointee.cc7 = 100; st.pointee.cc10 = 64; st.pointee.cc11 = 127
         let s = st.pointee
         for c in 0 ..< 16 {
             s.chans[c] = ChannelRT()
@@ -460,7 +469,11 @@ public final class Sf2SynthEngine: @unchecked Sendable {
     }
 
     public func setTrackRT(_ index: Int, _ t: TrackRT) {
-        if index >= 0 && index < Self.maxTracks { st.pointee.tracks[index] = t }
+        guard index >= 0 && index < Self.maxTracks else { return }
+        var r = t
+        r.ccSet = r.ccSet || r.hasNonDefaultCcs
+        r.chanMask = 0
+        st.pointee.tracks[index] = r
     }
 
     public func clearVoices() {
@@ -556,6 +569,13 @@ public final class Sf2SynthEngine: @unchecked Sendable {
                 }
             }
             if !any { return }
+            if s.pointee.spec, let t = track, t.pointee.ccSet {
+                let ch = Int(msg.channel >= 0 && msg.channel < 16 ? msg.channel : 0)
+                if t.pointee.chanMask & (1 << ch) == 0 {
+                    t.pointee.chanMask |= 1 << ch
+                    applyTrackCcsRT(t, ch)
+                }
+            }
             var trackVolumeMul = 1.0, trackPanPos = 0.0
             if let t = track?.pointee {
                 if s.pointee.spec {
@@ -598,11 +618,16 @@ public final class Sf2SynthEngine: @unchecked Sendable {
                 if msg.cc11.isFinite { t.pointee.cc11 = cc(msg.cc11) }
                 if msg.pan.isFinite { t.pointee.pan = max(-1, min(1, msg.pan)) }
                 if msg.gain.isFinite { t.pointee.gain = max(0, msg.gain) }
+                if s.pointee.spec && (msg.cc7.isFinite || msg.cc10.isFinite || msg.cc11.isFinite) {
+                    t.pointee.ccSet = true
+                    for c in 0 ..< 16 where t.pointee.chanMask & (1 << c) != 0 { applyTrackCcsRT(t, c) }
+                }
                 return
             }
-            if msg.cc7.isFinite { s.pointee.cc7 = cc(msg.cc7) }
-            if msg.cc10.isFinite { s.pointee.cc10 = cc(msg.cc10) }
-            if msg.cc11.isFinite { s.pointee.cc11 = cc(msg.cc11) }
+            // Engine-wide (one engine per app track): in .spec CC7/10/11 go to every channel's controller state.
+            if msg.cc7.isFinite { s.pointee.cc7 = cc(msg.cc7); if s.pointee.spec { for c in 0 ..< 16 { controlChangeRT(c, 7, Int(s.pointee.cc7)) } } }
+            if msg.cc10.isFinite { s.pointee.cc10 = cc(msg.cc10); if s.pointee.spec { for c in 0 ..< 16 { controlChangeRT(c, 10, Int(s.pointee.cc10)) } } }
+            if msg.cc11.isFinite { s.pointee.cc11 = cc(msg.cc11); if s.pointee.spec { for c in 0 ..< 16 { controlChangeRT(c, 11, Int(s.pointee.cc11)) } } }
 
         case SF2SynthEvent.Kind.controlChange.rawValue:
             guard s.pointee.spec, msg.channel >= 0, msg.channel < 16, msg.note >= 0, msg.note < 128 else { return }
@@ -909,6 +934,10 @@ public final class Sf2SynthEngine: @unchecked Sendable {
                 applyLive(&v.pointee, d)
             }
         }
+    }
+
+    @inline(__always) func applyTrackCcsRT(_ t: UnsafeMutablePointer<TrackRT>, _ ch: Int) {
+        controlChangeRT(ch, 7, Int(t.pointee.cc7)); controlChangeRT(ch, 10, Int(t.pointee.cc10)); controlChangeRT(ch, 11, Int(t.pointee.cc11))
     }
 
     /// Channel-mode controller message (RPN 0 pitch-bend range, CC121 reset), then live modulator update.

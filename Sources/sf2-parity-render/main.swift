@@ -3,8 +3,8 @@
 // Cross-engine parity tool: renders a scenario through Sf2SynthEngine `.spec` and writes interleaved
 // little-endian Float32 L/R frames. gbk's scripts/parity-render.ts reads the same scenario format.
 // Scenario: { font, sampleRate, frames, effects, masterGainDb, masterDynamics, strict, programs, maxVoices,
-//   tracks: [{trackIndex, preset, gain, pan}], events: [{frame, type, channel, trackIndex, note, velocity,
-//   controller, value, program, preset}] }   (preset = preset index -> setPreset with that region list)
+//   tracks: [{trackIndex, preset, gain, pan, cc7Volume, cc10Pan, cc11Expression}], events: [{frame, type, channel, trackIndex,
+//   note, velocity, controller, value, program, preset, cc7Volume, cc10Pan, cc11Expression (setControllers)}] }   (preset = preset index -> setPreset with that region list)
 import Foundation
 import SF2Engine
 
@@ -28,6 +28,7 @@ var tracks: [SF2TrackState] = []
 for t in (scen["tracks"] as? [[String: Any]]) ?? [] {
     tracks.append(SF2TrackState(trackIndex: int(t, "trackIndex") ?? 0,
                                 regions: try int(t, "preset").map { try sf.regionList(forPreset: $0, fidelity: .spec) },
+                                cc7Volume: dbl(t, "cc7Volume"), cc10Pan: dbl(t, "cc10Pan"), cc11Expression: dbl(t, "cc11Expression"),
                                 pan: dbl(t, "pan"), gain: dbl(t, "gain")))
 }
 engine.setTrackStates(tracks)
@@ -44,6 +45,11 @@ for (i, e) in ((scen["events"] as? [[String: Any]]) ?? []).enumerated() {
     case "programChange": kind = .programChange; note = int(e, "program") ?? note
     case "channelPressure": kind = .channelPressure; vel = int(e, "value") ?? vel
     case "polyPressure": kind = .polyPressure; vel = int(e, "value") ?? vel
+    case "setControllers":
+        var ev = SF2SynthEvent.setControllers(trackIndex: int(e, "trackIndex"), cc7Volume: dbl(e, "cc7Volume"), cc10Pan: dbl(e, "cc10Pan"),
+                                              cc11Expression: dbl(e, "cc11Expression"), pan: dbl(e, "pan"), gain: dbl(e, "gain"))
+        ev.frame = int(e, "frame") ?? 0; ev.seq = int(e, "seq") ?? i
+        events.append(ev); continue
     default: continue
     }
     let regions = try int(e, "preset").map { try sf.regionList(forPreset: $0, fidelity: .spec) }
