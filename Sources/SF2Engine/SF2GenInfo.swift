@@ -59,8 +59,29 @@ struct GenInfo: Sendable {
         guard let g = get(id), g.kind == .value else { return x }
         return Swift.max(g.min, Swift.min(g.max, x))
     }
+    /// Real-time clamp (no array access, no ARC): value-generator ranges as a switch. Kept in sync
+    /// with `table` by `test_Z11_genInfoTableAndClamp`.
+    @inline(__always) static func valueRange(_ id: Int) -> (Int, Int)? {
+        switch id {
+        case 5, 6, 7, 10, 11: return (-12000, 12000)
+        case 8: return (1500, 13500)
+        case 9: return (0, 960)
+        case 13: return (-960, 960)
+        case 15, 16, 29: return (0, 1000)
+        case 17: return (-500, 500)
+        case 21, 23, 25, 27, 33, 35: return (-12000, 5000)
+        case 22, 24: return (-16000, 4500)
+        case 26, 28, 30, 34, 36, 38: return (-12000, 8000)
+        case 31, 32, 39, 40: return (-1200, 1200)
+        case 37, 48: return (0, 1440)
+        case 51: return (-120, 120)
+        case 52: return (-99, 99)
+        case 56: return (0, 1200)
+        default: return nil
+        }
+    }
     @inline(__always) static func clamp(_ id: Int, _ x: Double) -> Double {
-        guard let g = get(id), g.kind == .value else { return x }
-        return Swift.max(Double(g.min), Swift.min(Double(g.max), x))
+        guard let (lo, hi) = valueRange(id) else { return x }
+        return Swift.max(Double(lo), Swift.min(Double(hi), x))
     }
 }

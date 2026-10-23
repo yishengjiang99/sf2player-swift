@@ -2,3 +2,4 @@
 .swiftpm/
 models/
 Package.resolved
+.build-asan/

@@ -23,7 +23,7 @@ every test named must exist under `Tests/`; status must be `pass`, `n/a (reason)
 | P-11 | §7.2, §7.3, §7.6, §7.7 | Bag/gen/mod indices monotonic; table sizes match terminal records | test_P11_indexConsistency | pass |
 | P-12 | §7.5, §7.9 | instrument < inst.count−1 and sampleID < shdr.count−1 at load | test_P12_instrumentAndSampleReferencesInRange | pass |
 | P-13 | §7.2, §7.6, §7.10 | Terminal records never played; orphans allowed; duplicate names kept | test_P13_terminalsNeverPlayedOrphansAndDuplicatesKept | pass |
-| P-99 | §10.1 | Fuzz: 10,000 mutations load or throw SF2Error; regions + 1,024 rendered frames never trap | test_P99_parserNeverCrashes | pending |
+| P-99 | §10.1 | Fuzz: 10,000 mutations load or throw SF2Error; regions + 1,024 rendered frames never trap | test_P99_parserNeverCrashes | pass |
 | Z-01 | §7.3, §7.7 | Zone non-global iff last generator is instrument/sampleID; only first zone may be global (object with >1 zone) | test_Z01_globalZoneDetectedByLastGenerator | pass |
 | Z-02 | §7.5, §7.9 | Generators after the terminal instrument/sampleID ignored | test_Z02_generatorsAfterTerminalIgnored | pass |
 | Z-03 | §7.5, §7.9, §8.1.2 | keyRange only first; velRange only first or after keyRange | test_Z03_rangeGeneratorPositionRules | pass |
@@ -71,7 +71,7 @@ every test named must exist under `Tests/`; status must be `pass`, `n/a (reason)
 | M-09 | §7.4, §7.8, §9.5.1 | Modulator identity and merge rules | test_M09_modulatorMergeRules | pass |
 | M-10 | §8.4 | 2.01 default modulator list (10 entries, errata resolved) | test_M10_defaultModulators201 | pass |
 | M-11 | §8.2.1 | Channel pressure, poly pressure, key, velocity sources fed | test_M11_liveSources | pending |
-| M-12 | §10.5 | Modulated destinations re-clamped | test_M12_modulatedValuesReclamped | pending |
+| M-12 | §10.5 | Modulated destinations re-clamped | test_M12_modulatedValuesReclamped | pass |
 | MIDI-01 | §9.2 | Note-on velocity 0 = note-off | test_MIDI01_velocityZeroIsNoteOff | pass |
 | MIDI-02 | §9.2 | CC64 sustain | test_MIDI02_sustainPedal | pending |
 | MIDI-03 | §9.2 | CC67 sostenuto | test_MIDI03_sostenuto | pending |
@@ -87,9 +87,9 @@ every test named must exist under `Tests/`; status must be `pass`, `n/a (reason)
 | N-05 | §9.6.3 | Per-generator scale (interpretation documented) | test_N05_nrpnRange | pending |
 | N-06 | §9.6, §9.2 | CC121 clears NRPN offsets | test_N06_resetClearsNrpn | pending |
 | E-01 | §10.1 | Structural errors name the rule and chunk; lenient collects warnings | test_E01_structuralErrorsNameRuleAndChunk | pass |
-| E-02 | §10.3 | Unknown enumerators ignored, never fail the load | test_E02_unknownEnumeratorsIgnored | pending |
-| E-03 | §10.4, §10.5 | Illegal values → default/ignore; out-of-range → clamp | test_E03_illegalValues | pending |
-| E-04 | §10.6 | Missing required terminator → zone ignored; nothing sounds → note-on ignored | test_E04_missingTerminatorIgnoresZone | pending |
+| E-02 | §10.3 | Unknown enumerators ignored, never fail the load | test_E02_unknownEnumeratorsIgnored | pass |
+| E-03 | §10.4, §10.5 | Illegal values → default/ignore; out-of-range → clamp | test_E03_illegalValues | pass |
+| E-04 | §10.6 | Missing required terminator → zone ignored; nothing sounds → note-on ignored | test_E04_missingTerminatorIgnoresZone | pass |
 | X-01 | §11 | Silicon SoundFonts (ROM header format) | — | n/a (no ROM hardware in this engine) |
 | X-02 | §5 (re-write clauses) | Rules for re-writing files | — | n/a (package is read-only; no writer) |
 | X-03 | §7.10 | linkedSample circular lists | — | n/a (spec: not currently fully defined; treated as mono, see S-10) |

@@ -145,3 +145,18 @@ final class ComplianceMTests: XCTestCase {
         XCTAssertEqual(r[0].modulators ?? [], d)
     }
 }
+
+extension ComplianceMTests {
+    func test_M12_modulatedValuesReclamped() throws {
+        let b = SF2Builder.single(SF2Builder.dc(400), loop: (10, 390), instGens: [(Gen.sampleModes, 1), (Gen.initialFilterFc, 9000)],
+                                  instMods: [.init(src: 0x0081, dest: 8, amount: 20000), .init(src: 0x0082, dest: 8, amount: -32000)])
+        let r = try SpecRender(b)
+        r.noteOn(60)
+        func fc() -> Double { r.engine.st.pointee.voices[Int(r.engine.st.pointee.order[0])].initialFc }
+        XCTAssertEqual(fc(), 9000 - 2400 * 0, accuracy: 1e-9, "velocity 127 -> default vel-to-filter 0")
+        r.cc(1, 127)
+        XCTAssertEqual(fc(), 13500, "clamped to 13500 after summation")
+        r.cc(1, 0); r.cc(2, 127)
+        XCTAssertEqual(fc(), 1500, "clamped to 1500")
+    }
+}

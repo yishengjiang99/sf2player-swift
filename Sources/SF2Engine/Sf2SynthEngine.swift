@@ -153,6 +153,8 @@ struct Voice {
 }
 
 @inline(__always) private func readSampleMono(_ data: UnsafePointer<Float>, _ len: Int, _ pos: Double) -> Double {
+    // Non-finite / absurd positions (pathological tuning in fuzzed files) read silence instead of trapping.
+    guard pos.isFinite, abs(pos) < 9e15 else { return 0 }
     let i = Int(pos)
     let f = pos - Double(i)
     let a = i >= 0 && i < len ? Double(data[i]) : 0
@@ -650,14 +652,15 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         let filterGain = 1 / (q / 0.7071).squareRoot()
         v.baseGain = cbAttenToLin(max(0, min(1440, v.regAtten + d[48]))) * filterGain
         v.regionPanPos = max(-500, min(500, v.regPan + d[17])) / 500
-        v.initialFc = v.regFc + d[8]
+        // M-12 / Z-11: modulated destinations are re-clamped to their 8.1.3 range on every evaluation.
+        v.initialFc = GenInfo.clamp(8, v.regFc + d[8])
         if v.lastFc != v.initialFc { v.lastFc = .nan }
-        v.vibToPitch = v.regVib + d[6]
-        v.modToPitch = v.regModPitch + d[5]
-        v.modEnvToPitch = v.regModEnvPitch + d[7]
-        v.modLfoToFc = v.regModLfoFc + d[10]
-        v.modEnvToFc = v.regModEnvFc + d[11]
-        v.modLfoToVol = v.regModLfoVol + d[13]
+        v.vibToPitch = GenInfo.clamp(6, v.regVib + d[6])
+        v.modToPitch = GenInfo.clamp(5, v.regModPitch + d[5])
+        v.modEnvToPitch = GenInfo.clamp(7, v.regModEnvPitch + d[7])
+        v.modLfoToFc = GenInfo.clamp(10, v.regModLfoFc + d[10])
+        v.modEnvToFc = GenInfo.clamp(11, v.regModEnvFc + d[11])
+        v.modLfoToVol = GenInfo.clamp(13, v.regModLfoVol + d[13])
         let pitch = d[Int(SF2Modulator.pitchDest)] + d[51] * 100 + d[52]
         v.baseRate = pitch == 0 ? v.baseRate0 : v.baseRate0 * centsToRatio(pitch)
         v.rate = v.baseRate
@@ -763,7 +766,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
             }
             return
         }
-        if v.pointee.pos >= v.pointee.end { v.pointee.finished = true }
+        if v.pointee.pos >= v.pointee.end || !v.pointee.pos.isFinite { v.pointee.finished = true }
     }
 
     /// One output frame: renderRange / renderScheduled inner voice loop.

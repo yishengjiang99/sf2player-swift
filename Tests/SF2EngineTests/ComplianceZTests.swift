@@ -116,6 +116,11 @@ final class ComplianceZTests: XCTestCase {
         XCTAssertEqual(GenInfo.defaultValue(Gen.initialFilterFc), 13500)
         XCTAssertEqual(GenInfo.defaultValue(Gen.scaleTuning), 100)
         XCTAssertEqual(GenInfo.defaultValue(Gen.overridingRootKey), -1)
+        for id in 0 ... 70 {
+            let g = GenInfo.get(id)
+            let r = GenInfo.valueRange(id)
+            if let g, g.kind == .value { XCTAssertEqual(r?.0, g.min, "\(id)"); XCTAssertEqual(r?.1, g.max, "\(id)") } else { XCTAssertNil(r, "\(id)") }
+        }
         let r = try spec(bank(inst: [[(Gen.initialAttenuation, 1400), (Gen.pan, 400), (Gen.fineTune, 99), (Gen.coarseTune, -120),
                                       (Gen.sustainVolEnv, 1440), (Gen.initialFilterQ, 900), (Gen.sampleID, 0)]],
                               preset: [[(Gen.initialAttenuation, 100), (Gen.pan, 300), (Gen.fineTune, 50), (Gen.coarseTune, -10),
