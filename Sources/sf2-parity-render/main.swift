@@ -2,7 +2,7 @@
 // usage: sf2-parity-render <scenario.json> <out.f32>
 // Cross-engine parity tool: renders a scenario through Sf2SynthEngine `.spec` and writes interleaved
 // little-endian Float32 L/R frames. gbk's scripts/parity-render.ts reads the same scenario format.
-// Scenario: { font, sampleRate, frames, effects, strict, programs, maxVoices,
+// Scenario: { font, sampleRate, frames, effects, masterGainDb, masterDynamics, strict, programs, maxVoices,
 //   tracks: [{trackIndex, preset, gain, pan}], events: [{frame, type, channel, trackIndex, note, velocity,
 //   controller, value, program, preset}] }   (preset = preset index -> setPreset with that region list)
 import Foundation
@@ -21,6 +21,8 @@ let sf = try SF2SoundFont(data: Data(contentsOf: URL(fileURLWithPath: fontPath))
 let engine = Sf2SynthEngine(outSr: sr, maxVoices: int(scen, "maxVoices") ?? 64)
 engine.fidelity = .spec
 engine.effectsEnabled = (scen["effects"] as? Bool) ?? false
+if let g = scen["masterGainDb"] as? Double { engine.masterGainDb = g }
+if let d = scen["masterDynamics"] as? Bool { engine.masterDynamicsEnabled = d }
 if (scen["programs"] as? Bool) ?? false { try engine.loadPrograms(from: sf) }
 var tracks: [SF2TrackState] = []
 for t in (scen["tracks"] as? [[String: Any]]) ?? [] {
