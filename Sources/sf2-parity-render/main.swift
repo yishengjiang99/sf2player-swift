@@ -63,3 +63,11 @@ l.withUnsafeMutableBufferPointer { lp in
 var out = [Float](repeating: 0, count: frames * 2)
 for i in 0 ..< frames { out[2 * i] = l[i]; out[2 * i + 1] = r[i] }
 try out.withUnsafeBufferPointer { Data(buffer: $0) }.write(to: URL(fileURLWithPath: a[2]))
+
+// PARITY_DUMP=<presetIndex>: print that preset's .spec regions (debugging cross-engine differences).
+if let p = ProcessInfo.processInfo.environment["PARITY_DUMP"].flatMap(Int.init) {
+    for r in try sf.regionList(forPreset: p, fidelity: .spec).regions {
+        let m = (r.modulators ?? []).map { "\($0.src):\($0.dest):\($0.amount):\($0.amtSrc):\($0.transform)" }.joined(separator: ",")
+        print("key \(r.keyRange.0)-\(r.keyRange.1) vel \(r.velRange.0)-\(r.velRange.1) len \(r.sample.dataL.count) rate \(r.sample.sampleRate) loop \(r.sample.loopStart)-\(r.sample.loopEnd) modes \(r.sampleModes) root \(r.overridingRootKey ?? r.originalKey) ct \(r.coarseTune) ft \(r.fineTune) st \(r.scaleTuning) att \(r.initialAttenuationCb) pan \(r.pan) ve \(r.volEnv.delayTc),\(r.volEnv.attackTc),\(r.volEnv.holdTc),\(r.volEnv.decayTc),\(r.volEnv.sustainCb),\(r.volEnv.releaseTc) me \(r.modEnv.delayTc),\(r.modEnv.attackTc),\(r.modEnv.holdTc),\(r.modEnv.decayTc),\(r.modEnv.sustain),\(r.modEnv.releaseTc) fc \(r.initialFilterFcCents) q \(r.initialFilterQCb) meFc \(r.modEnvToFilterFcCents) mlFc \(r.modLfoToFilterFcCents) ml \(r.modLfoDelayTc),\(r.modLfoFreqCents),\(r.modLfoToPitchCents) vl \(r.vibLfoDelayTc),\(r.vibLfoFreqCents),\(r.vibLfoToPitchCents) ex \(r.exclusiveClass) mePitch \(r.modEnvToPitchCents) mlVol \(r.modLfoToVolumeCb) kn \(r.keynumToVolEnvHold),\(r.keynumToVolEnvDecay),\(r.keynumToModEnvHold),\(r.keynumToModEnvDecay) ov \(r.keynumOverride ?? -1),\(r.velocityOverride ?? -1) send \(r.chorusSend),\(r.reverbSend) mods \(m)")
+    }
+}
