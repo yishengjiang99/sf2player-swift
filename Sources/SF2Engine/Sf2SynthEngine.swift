@@ -455,6 +455,11 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         case SF2SynthEvent.Kind.noteOn.rawValue:
             let note = Int(msg.note)
             let velocity = Int(msg.velocity)
+            // MIDI-01 (9.2): in .spec a note-on with velocity 0 is a note-off.
+            if s.pointee.spec && velocity == 0 {
+                releaseNote(msg.note, trackIndex: msg.trackIndex, channel: msg.channel)
+                return
+            }
             var track: UnsafeMutablePointer<TrackRT>?
             if msg.trackIndex >= 0 && Int(msg.trackIndex) < Self.maxTracks && s.pointee.tracks[Int(msg.trackIndex)].present {
                 track = s.pointee.tracks + Int(msg.trackIndex)
@@ -501,16 +506,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
             }
 
         case SF2SynthEvent.Kind.noteOff.rawValue:
-            let note = msg.note
-            for i in 0 ..< s.pointee.count {
-                let v = s.pointee.voices + Int(s.pointee.order[i])
-                let sameTrack = msg.trackIndex < 0 || v.pointee.trackIndex == msg.trackIndex
-                let sameChannel = msg.channel < 0 || v.pointee.channel == msg.channel
-                if v.pointee.note == note && sameTrack && sameChannel {
-                    v.pointee.volEnv.noteOff(); v.pointee.modEnv.noteOff()
-                    if v.pointee.loopUntilReleaseThenTail { v.pointee.inReleaseTail = true }
-                }
-            }
+            releaseNote(msg.note, trackIndex: msg.trackIndex, channel: msg.channel)
 
         case SF2SynthEvent.Kind.setControllers.rawValue:
             @inline(__always) func cc(_ x: Double) -> Double { max(0, min(127, Double(Int32(truncatingIfNeeded: Int64(max(-1e18, min(1e18, x))))))) }
@@ -540,6 +536,19 @@ public final class Sf2SynthEngine: @unchecked Sendable {
 
         default:
             break
+        }
+    }
+
+    @inline(__always) func releaseNote(_ note: Int32, trackIndex: Int32, channel: Int32) {
+        let s = st
+        for i in 0 ..< s.pointee.count {
+            let v = s.pointee.voices + Int(s.pointee.order[i])
+            let sameTrack = trackIndex < 0 || v.pointee.trackIndex == trackIndex
+            let sameChannel = channel < 0 || v.pointee.channel == channel
+            if v.pointee.note == note && sameTrack && sameChannel {
+                v.pointee.volEnv.noteOff(); v.pointee.modEnv.noteOff()
+                if v.pointee.loopUntilReleaseThenTail { v.pointee.inReleaseTail = true }
+            }
         }
     }
 
@@ -792,9 +801,15 @@ public final class Sf2SynthEngine: @unchecked Sendable {
             if v.pointee.modLfoToVol != 0 { gain *= cbAttenToLin(-modLfo * v.pointee.modLfoToVol) }
             let mixPan = max(-1, min(1, v.pointee.regionPanPos + (v.pointee.trackIndex < 0 ? ccPanPos : v.pointee.trackPanPos)))
             if mixPan != v.pointee.lastMixPan {
-                let angle = (mixPan + 1) * 0.25 * Double.pi
-                v.pointee.gL = cos(angle)
-                v.pointee.gR = sin(angle)
+                if v.pointee.spec {
+                    // G-10 (8.1.2 #17): linear amplitude law; -250 -> 75 % left, 25 % right.
+                    v.pointee.gL = (1 - mixPan) * 0.5
+                    v.pointee.gR = (1 + mixPan) * 0.5
+                } else {
+                    let angle = (mixPan + 1) * 0.25 * Double.pi
+                    v.pointee.gL = cos(angle)
+                    v.pointee.gR = sin(angle)
+                }
                 v.pointee.lastMixPan = mixPan
             }
             sumL += fL * gain * v.pointee.gL

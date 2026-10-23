@@ -555,10 +555,20 @@ public final class SF2SoundFont: @unchecked Sendable {
         let sh = shdr[sampleID]
         let n = samples.count
         func offset(_ fine: Int, _ coarse: Int) -> Int { (g[fine] ?? 0) + (g[coarse] ?? 0) * 32768 }
-        let start = clampU32(sh.start + offset(Gen.startAddrsOffset, Gen.startAddrsCoarseOffset), 0, n)
-        let end = clampU32(sh.end + offset(Gen.endAddrsOffset, Gen.endAddrsCoarseOffset), 0, n)
-        let loopStart = clampU32(sh.startLoop + offset(Gen.startloopAddrsOffset, Gen.startloopAddrsCoarseOffset), 0, n)
-        let loopEnd = clampU32(sh.endLoop + offset(Gen.endloopAddrsOffset, Gen.endloopAddrsCoarseOffset), 0, n)
+        var start = clampU32(sh.start + offset(Gen.startAddrsOffset, Gen.startAddrsCoarseOffset), 0, n)
+        var end = clampU32(sh.end + offset(Gen.endAddrsOffset, Gen.endAddrsCoarseOffset), 0, n)
+        var loopStart = clampU32(sh.startLoop + offset(Gen.startloopAddrsOffset, Gen.startloopAddrsCoarseOffset), 0, n)
+        var loopEnd = clampU32(sh.endLoop + offset(Gen.endloopAddrsOffset, Gen.endloopAddrsCoarseOffset), 0, n)
+        if spec {
+            // S-02: header points must lie in smpl with end > start, else the zone is silent.
+            guard sh.start >= 0, sh.end <= n, sh.end > sh.start else { return nil }
+            // S-03: signed offsets, clamped into this sample's own range keeping start < end (10.5).
+            let lo = sh.start, hi = sh.end
+            start = max(lo, min(hi - 1, sh.start + offset(Gen.startAddrsOffset, Gen.startAddrsCoarseOffset)))
+            end = max(start + 1, min(hi, sh.end + offset(Gen.endAddrsOffset, Gen.endAddrsCoarseOffset)))
+            loopStart = max(lo, min(hi, sh.startLoop + offset(Gen.startloopAddrsOffset, Gen.startloopAddrsCoarseOffset)))
+            loopEnd = max(lo, min(hi, sh.endLoop + offset(Gen.endloopAddrsOffset, Gen.endloopAddrsCoarseOffset)))
+        }
         if end <= start { return nil }
 
         let dataL = sampleBuffer(start, end, normalize: normalize)
@@ -579,9 +589,11 @@ public final class SF2SoundFont: @unchecked Sendable {
         let len = dataL.count
         var region = SF2Region(
             keyRange: range(g[Gen.keyRange]), velRange: range(g[Gen.velRange]),
-            sample: SF2SampleData(dataL: dataL, dataR: dataR, sampleRate: sh.sampleRate, start: 0, end: len,
+            // S-04: a zero rate is illegal -> nearest practical value (400 Hz); others are kept.
+            sample: SF2SampleData(dataL: dataL, dataR: dataR, sampleRate: spec && sh.sampleRate <= 0 ? 400 : sh.sampleRate, start: 0, end: len,
                                   loopStart: max(0, min(loopStart - start, len)), loopEnd: max(0, min(loopEnd - start, len))),
-            sampleModes: g[Gen.sampleModes] ?? 0,
+            // S-08: only the low two bits of sampleModes are defined (spec).
+            sampleModes: spec ? (g[Gen.sampleModes] ?? 0) & 3 : g[Gen.sampleModes] ?? 0,
             // S-05: 128...255 (255 = unpitched) -> 60. S-06: -1 / out of range -> header key.
             originalKey: spec && sh.originalPitch > 127 ? 60 : sh.originalPitch,
             overridingRootKey: spec ? g[Gen.overridingRootKey].flatMap { (0 ... 127).contains($0) ? $0 : nil }

@@ -38,4 +38,16 @@ final class ComplianceSTests: XCTestCase {
         let r = try sf(b).buildRegionsForPreset(0, fidelity: .spec)
         XCTAssertEqual(r[0].fineTune, -4, "7.10 example: -4 cents added to tuning")
     }
+
+    func test_S02_samplePointsOutOfRange() throws {
+        var b = B.single(B.dc(100))
+        b.sampleHeaders[0].end = 5000                      // past smpl
+        XCTAssertThrowsError(try SF2SoundFont(data: b.build(), options: .strict)) {
+            XCTAssertEqual($0 as? SF2Error, .structural(.samplePointsOutOfRange(sample: 0)))
+        }
+        XCTAssertEqual(try SF2SoundFont(data: b.build()).buildRegionsForPreset(0, fidelity: .spec).count, 0, "lenient: silent")
+        var e = B.single(B.dc(100)); e.sampleHeaders[0].end = 0  // end <= start
+        XCTAssertThrowsError(try SF2SoundFont(data: e.build(), options: .strict))
+        XCTAssertEqual(try SF2SoundFont(data: e.build()).buildRegionsForPreset(0, fidelity: .spec).count, 0)
+    }
 }

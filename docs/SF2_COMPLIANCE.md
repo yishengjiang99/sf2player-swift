@@ -37,17 +37,17 @@ every test named must exist under `Tests/`; status must be `pass`, `n/a (reason)
 | Z-11 | §8.1.3, §10.5 | Single GenInfo table; summed values clamped to useful range | test_Z11_genInfoTableAndClamp | pass |
 | Z-12 | §7.2 | First duplicate (preset, bank) active; preset > 127 / bank > 128 never playable | test_Z12_presetResolution | pass |
 | S-01 | §6.1, §8.1.2 #48 | No normalization in .spec: level = raw/32768 | test_S01_specDoesNotNormalize | pass |
-| S-02 | §7.10, §10.1 | Sample points within smpl, end > start; else silent (lenient) / reject (strict) | test_S02_samplePointsOutOfRange | pending |
-| S-03 | §8.1.2 #0–4,12,45,50, §10.5 | Signed address offsets; clamp into the sample's own range keeping start < end | test_S03_signedAddressOffsets | pending |
-| S-04 | §7.10 | sampleRate 0 → practical value, no division by zero | test_S04_zeroSampleRate | pending |
+| S-02 | §7.10, §10.1 | Sample points within smpl, end > start; else silent (lenient) / reject (strict) | test_S02_samplePointsOutOfRange | pass |
+| S-03 | §8.1.2 #0–4,12,45,50, §10.5 | Signed address offsets; clamp into the sample's own range keeping start < end | test_S03_signedAddressOffsets | pass |
+| S-04 | §7.10 | sampleRate 0 → practical value, no division by zero | test_S04_zeroSampleRate | pass |
 | S-05 | §7.10 | byOriginalPitch 128–255 → 60 | test_S05_unpitchedOriginalKey | pass |
 | S-06 | §8.1.2 #58 | overridingRootKey −1/absent → header key | test_S06_overridingRootKeyMinusOneUsesHeader | pass |
-| S-07 | §7.10 | chPitchCorrection signed cents (−4 example) | test_S07_pitchCorrection | pass |
-| S-08 | §8.1.2 #54, §9.1.2, §6.2 | sampleModes low 2 bits; mode 3 loops while held then plays to end | test_S08_sampleModesLowBits | pending |
+| S-07 | §7.10 | chPitchCorrection signed cents (−4 example) | test_S07_pitchCorrection, test_S07_pitchCorrectionMeasured | pass |
+| S-08 | §8.1.2 #54, §9.1.2, §6.2 | sampleModes low 2 bits; mode 3 loops while held then plays to end | test_S08_sampleModesLowBits | pass |
 | S-09 | §7.10 | Loop sanity policy explicit and tested | test_S09_loopSanityPolicy | pending |
 | S-10 | §7.10 | Stereo pairs: one voice per zone, own pan, pitch from right zone; invalid link → mono | test_S10_stereoPairsOneVoicePerZone | pending |
-| S-11 | §6.1 | Reads past end yield silence | test_S11_readPastEndIsSilent | pending |
-| G-01 | §9.1.1, §8.1.2 #51/52/56/58 | Pitch formula, measured f0 ±1 cent | test_G01_measuredPitch | pending |
+| S-11 | §6.1 | Reads past end yield silence | test_S11_readPastEndIsSilent | pass |
+| G-01 | §9.1.1, §8.1.2 #51/52/56/58 | Pitch formula, measured f0 ±1 cent | test_G01_measuredPitch | pass |
 | G-02 | §8.1.1, §8.1.2 #46/47 | keynum / velocity substitution generators | test_G02_keynumVelocitySubstitution | pending |
 | G-03 | §8.1.2 #33–40, §9.1.7 | Volume envelope shape and timing | test_G03_volumeEnvelopeShape | pending |
 | G-04 | §8.1.2 #25–32 | Modulation envelope shape and timing | test_G04_modulationEnvelopeShape | pending |
@@ -55,8 +55,8 @@ every test named must exist under `Tests/`; status must be `pass`, `n/a (reason)
 | G-06 | §8.1.2 #21–24, §9.1.6 | Triangle LFOs, phase and frequency | test_G06_lfoTriangleFrequencyAndPhase | pending |
 | G-07 | §8.1.2 #7/#11 | modEnvToPitch / modEnvToFilterFc | test_G07_modEnvToPitchAndFc | pending |
 | G-08 | §8.1.2 #8/#9, §9.1.3 | Resonant LPF, DC gain −Q/2, bypass above 20 kHz with Q ≤ 0 (±1 dB) | test_G08_filterDcAndPeak | pending |
-| G-09 | §8.1.2 #48 | initialAttenuation cB | test_G09_initialAttenuation | pending |
-| G-10 | §8.1.2 #17 | Linear pan law | test_G10_linearPanLaw | pending |
+| G-09 | §8.1.2 #48 | initialAttenuation cB | test_G09_initialAttenuation | pass |
+| G-10 | §8.1.2 #17 | Linear pan law (L/(L+R) ±0.0058 ≈ 0.1 dB) | test_G10_linearPanLaw | pass |
 | G-11 | §8.1.2 #15/#16, §9.1.5 | Reverb/chorus sends and aux buses | test_G11_effectsSends | pending |
 | G-12 | §8.1.2 #57 | exclusiveClass: fast release, same preset + channel | test_G12_exclusiveClassFastReleaseSamePresetChannel | pending |
 | G-13 | §8.1.3 | Non-real-time generators fixed at note-on | test_G13_nonRealtimeGeneratorsFixedAtNoteOn | pending |
@@ -72,7 +72,7 @@ every test named must exist under `Tests/`; status must be `pass`, `n/a (reason)
 | M-10 | §8.4 | 2.01 default modulator list (10 entries, errata resolved) | test_M10_defaultModulators201 | pass |
 | M-11 | §8.2.1 | Channel pressure, poly pressure, key, velocity sources fed | test_M11_liveSources | pending |
 | M-12 | §10.5 | Modulated destinations re-clamped | test_M12_modulatedValuesReclamped | pending |
-| MIDI-01 | §9.2 | Note-on velocity 0 = note-off | test_MIDI01_velocityZeroIsNoteOff | pending |
+| MIDI-01 | §9.2 | Note-on velocity 0 = note-off | test_MIDI01_velocityZeroIsNoteOff | pass |
 | MIDI-02 | §9.2 | CC64 sustain | test_MIDI02_sustainPedal | pending |
 | MIDI-03 | §9.2 | CC67 sostenuto | test_MIDI03_sostenuto | pending |
 | MIDI-04 | §9.2 | CC66 soft pedal | test_MIDI04_softPedal | pending |
