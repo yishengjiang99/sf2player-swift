@@ -45,3 +45,7 @@ Saved as /workspace/sf2-baseline.txt (box only; may be lost).
   (so -32768 tc in synthetic test regions now means 1 ms: two SpecFidelityTests sample indices moved,
   expected values unchanged; testFilterQFromRegion expects the new q formula). Stereo pairs: one
   voice per zone, left zone takes the right zone's pitch.
+- Chunk 8: G-11 (sends, aux-bus renderRange, built-in reverb/chorus, `effectsEnabled`); every matrix
+  row now pass or n/a and `matrixMustBeComplete = true`; `scripts/diff-fluidsynth` + `sf2-spec-render`
+  dev executable + optional CI job (continue-on-error); docs/diff-report.md from CI run 39891233946;
+  README + doc comments updated (2.01, fidelity modes, strict loading, effects, new events).

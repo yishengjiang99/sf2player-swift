@@ -39,10 +39,10 @@ engine.renderRange(&left, &right)
 ```swift
 let sf = try SF2SoundFont(data: data, options: .strict)   // .lenient (default) repairs and records `warnings`
 engine.fidelity = .spec
-engine.loadPrograms(from: sf)                              // program change / bank select per channel
+try engine.loadPrograms(from: sf)                              // program change / bank select per channel
 engine.dispatchEvent(.programChange(40, channel: 1))
 engine.dispatchEvent(.channelPressure(90, channel: 1))
-engine.dispatchEvent(.polyPressure(64, value: 90, channel: 1))
+engine.dispatchEvent(.polyPressure(note: 64, value: 90, channel: 1))
 ```
 
 Strict loading throws `SF2Error.structural(_)` for any chapter 4-7 violation (chunk order or size,
