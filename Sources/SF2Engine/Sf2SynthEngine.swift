@@ -172,6 +172,8 @@ struct Voice {
     var keyDown = true, deferred = false, sostenuto = false
     var list: Int32 = -1
     var effKey: Int32 = 0, effVel: Int32 = 0
+    /// G-11: send amounts (0 ... 1) and the region values they are modulated from.
+    var chorusAmt = 0.0, reverbAmt = 0.0, regChorus = 0.0, regReverb = 0.0
     /// G-08: resonance in cB and whether the filter is out of circuit (Fc >= 20 kHz / 0.45 sr with Q <= 0).
     var qCb = 0.0
 
@@ -213,6 +215,10 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         var nrpn: UnsafeMutablePointer<Double>
         var poly: UnsafeMutablePointer<UInt8>
         var programs: UnsafeMutablePointer<Int32>
+        /// G-11: per-frame send-bus sums and the built-in effects.
+        var revL = 0.0, revR = 0.0, choL = 0.0, choR = 0.0
+        var fx: SF2EffectsRT
+        var fxOn = true
     }
 
     public let outSr: Double
@@ -247,7 +253,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         programs.initialize(repeating: -1, count: 129 * 128)
         st = .allocate(capacity: 1)
         st.initialize(to: State(maxVoices: mv, capacity: cap, voices: voices, order: order, free: free, freeCount: cap,
-                                tracks: tracks, store: store.hdr, chans: chans, ccs: ccs, nrpn: nrpn, poly: poly, programs: programs))
+                                tracks: tracks, store: store.hdr, chans: chans, ccs: ccs, nrpn: nrpn, poly: poly, programs: programs, fx: SF2EffectsRT(sr: outSr)))
         resetChannelsRT()
     }
 
@@ -257,6 +263,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         s.order.deallocate(); s.free.deallocate()
         s.tracks.deinitialize(count: Self.maxTracks); s.tracks.deallocate()
         s.chans.deallocate(); s.ccs.deallocate(); s.nrpn.deallocate(); s.poly.deallocate(); s.programs.deallocate()
+        s.fx.free()
         st.deinitialize(count: 1); st.deallocate()
     }
 
@@ -803,6 +810,8 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         v.modLfoToFc = GenInfo.clamp(10, v.regModLfoFc + d[10])
         v.modEnvToFc = GenInfo.clamp(11, v.regModEnvFc + d[11])
         v.modLfoToVol = GenInfo.clamp(13, v.regModLfoVol + d[13])
+        v.chorusAmt = GenInfo.clamp(15, v.regChorus + d[15]) / 1000
+        v.reverbAmt = GenInfo.clamp(16, v.regReverb + d[16]) / 1000
         let pitch = d[Int(SF2Modulator.pitchDest)] + d[51] * 100 + d[52]
         v.baseRate = pitch == 0 ? v.baseRate0 : v.baseRate0 * centsToRatio(pitch)
         v.rate = v.baseRate
@@ -821,6 +830,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         voice.regModEnvPitch = Double(reg.modEnvToPitchCents)
         voice.regModLfoFc = Double(reg.modLfoToFilterFcCents); voice.regModEnvFc = Double(reg.modEnvToFilterFcCents)
         voice.regModLfoVol = Double(reg.modLfoToVolumeCb)
+        voice.regChorus = Double(reg.chorusSend); voice.regReverb = Double(reg.reverbSend)
         // MIDI-04 soft pedal (CC66 >= 64 at note-on): -6 dB (60 cB) and -600 cents cutoff (engine choice).
         if st.pointee.ccs[Int(max(0, min(15, voice.channel))) * 128 + 66] >= 64 {
             voice.regAtten += Self.softPedalAttenuationCb; voice.regFc -= Self.softPedalFcCents
@@ -1055,8 +1065,13 @@ public final class Sf2SynthEngine: @unchecked Sendable {
                 }
                 v.pointee.lastMixPan = mixPan
             }
-            sumL += fL * gain * v.pointee.gL
-            sumR += fR * gain * v.pointee.gR
+            let oL = fL * gain * v.pointee.gL, oR = fR * gain * v.pointee.gR
+            sumL += oL
+            sumR += oR
+            if v.pointee.spec {
+                s.pointee.revL += oL * v.pointee.reverbAmt; s.pointee.revR += oR * v.pointee.reverbAmt
+                s.pointee.choL += oL * v.pointee.chorusAmt; s.pointee.choR += oR * v.pointee.chorusAmt
+            }
             advancePos(v)
             vi -= 1
         }
@@ -1066,11 +1081,66 @@ public final class Sf2SynthEngine: @unchecked Sendable {
     /// gbk `renderRange`: overwrites `count` frames.
     public func renderRange(_ outL: UnsafeMutablePointer<Float>, _ outR: UnsafeMutablePointer<Float>, _ count: Int) {
         let ccPanPos = st.pointee.spec ? 0 : (st.pointee.cc10 - 64) / 63
+        let fx = st.pointee.spec && st.pointee.fxOn
         for i in 0 ..< count {
-            let (l, r) = renderFrame(ccPanPos)
+            var (l, r) = renderFrame(ccPanPos)
+            if fx { let w = takeSends(); l += w.0; r += w.1 } else { clearSends() }
             outL[i] = Float(l)
             outR[i] = Float(r)
         }
+    }
+
+    /// G-11: `effectsEnabled` mixes the built-in reverb / chorus (driven by each voice's
+    /// chorusEffectsSend / reverbEffectsSend, CC91 / CC93 via the default modulators) into
+    /// `renderRange` / `renderScheduled` output. `.spec` voices only; set while not rendering.
+    public var effectsEnabled: Bool {
+        get { st.pointee.fxOn }
+        set { st.pointee.fxOn = newValue }
+    }
+
+    /// Clears the built-in reverb / chorus state. Call while not rendering.
+    public func resetEffects() { st.pointee.fx.clear() }
+
+    @inline(__always) private func clearSends() {
+        st.pointee.revL = 0; st.pointee.revR = 0; st.pointee.choL = 0; st.pointee.choR = 0
+    }
+
+    @inline(__always) private func takeSends() -> (Double, Double) {
+        let s = st
+        let w = s.pointee.fx.process(s.pointee.revL, s.pointee.revR, s.pointee.choL, s.pointee.choR)
+        s.pointee.revL = 0; s.pointee.revR = 0; s.pointee.choL = 0; s.pointee.choR = 0
+        return w
+    }
+
+    /// G-11 aux-bus render: dry mix into `outL/outR` and the pre-effect send buses into the four aux
+    /// buffers (send level x the voice's panned dry signal). The built-in effects are not applied, so a
+    /// host can run its own reverb / chorus. Overwrites `count` frames of every buffer.
+    public func renderRange(_ outL: UnsafeMutablePointer<Float>, _ outR: UnsafeMutablePointer<Float>,
+                            reverbL: UnsafeMutablePointer<Float>, reverbR: UnsafeMutablePointer<Float>,
+                            chorusL: UnsafeMutablePointer<Float>, chorusR: UnsafeMutablePointer<Float>, _ count: Int) {
+        let s = st
+        let ccPanPos = s.pointee.spec ? 0 : (s.pointee.cc10 - 64) / 63
+        for i in 0 ..< count {
+            let (l, r) = renderFrame(ccPanPos)
+            outL[i] = Float(l); outR[i] = Float(r)
+            reverbL[i] = Float(s.pointee.revL); reverbR[i] = Float(s.pointee.revR)
+            chorusL[i] = Float(s.pointee.choL); chorusR[i] = Float(s.pointee.choR)
+            s.pointee.revL = 0; s.pointee.revR = 0; s.pointee.choL = 0; s.pointee.choR = 0
+        }
+    }
+
+    /// Array convenience for the aux-bus render.
+    public func renderRange(_ left: inout [Float], _ right: inout [Float], reverbL: inout [Float], reverbR: inout [Float],
+                            chorusL: inout [Float], chorusR: inout [Float]) {
+        let n = [left.count, right.count, reverbL.count, reverbR.count, chorusL.count, chorusR.count].min()!
+        left.withUnsafeMutableBufferPointer { l in right.withUnsafeMutableBufferPointer { r in
+            reverbL.withUnsafeMutableBufferPointer { a in reverbR.withUnsafeMutableBufferPointer { b in
+                chorusL.withUnsafeMutableBufferPointer { c in chorusR.withUnsafeMutableBufferPointer { d in
+                    renderRange(l.baseAddress!, r.baseAddress!, reverbL: a.baseAddress!, reverbR: b.baseAddress!,
+                                chorusL: c.baseAddress!, chorusR: d.baseAddress!, n)
+                } }
+            } }
+        } }
     }
 
     /// gbk `renderScheduled` (AudioWorklet path): dispatches events whose frame <= renderedSamples.
@@ -1080,12 +1150,14 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         var eventIndex = startIndex
         var rendered = startRendered
         let ccPanPos = st.pointee.spec ? 0 : (st.pointee.cc10 - 64) / 63
+        let fx = st.pointee.spec && st.pointee.fxOn
         for i in 0 ..< count {
             while eventIndex < eventCount && events[eventIndex].frame <= rendered {
                 dispatch(events[eventIndex])
                 eventIndex += 1
             }
-            let (l, r) = renderFrame(ccPanPos)
+            var (l, r) = renderFrame(ccPanPos)
+            if fx { let w = takeSends(); l += w.0; r += w.1 } else { clearSends() }
             outL[i] = Float(l)
             outR[i] = Float(r)
             rendered += 1

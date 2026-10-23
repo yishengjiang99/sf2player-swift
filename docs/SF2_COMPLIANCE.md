@@ -57,7 +57,7 @@ every test named must exist under `Tests/`; status must be `pass`, `n/a (reason)
 | G-08 | §8.1.2 #8/#9, §9.1.3 | Resonant LPF, DC gain −Q/2, bypass above 20 kHz with Q ≤ 0 (±1 dB) | test_G08_filterDcAndPeak | pass |
 | G-09 | §8.1.2 #48 | initialAttenuation cB | test_G09_initialAttenuation | pass |
 | G-10 | §8.1.2 #17 | Linear pan law (L/(L+R) ±0.0058 ≈ 0.1 dB) | test_G10_linearPanLaw | pass |
-| G-11 | §8.1.2 #15/#16, §9.1.5 | Reverb/chorus sends and aux buses | test_G11_effectsSends | pending |
+| G-11 | §8.1.2 #15/#16, §9.1.5 | Reverb/chorus sends and aux buses | test_G11_effectsSends | pass |
 | G-12 | §8.1.2 #57 | exclusiveClass: fast release, same preset + channel | test_G12_exclusiveClassFastReleaseSamePresetChannel | pass |
 | G-13 | §8.1.3 | Non-real-time generators fixed at note-on | test_G13_nonRealtimeGeneratorsFixedAtNoteOn | pass |
 | M-01 | §8.2, §8.2.4 | Source word layout; type > 3 → ignore modulator | test_M01_sourceLayoutAndUnknownType | pass |

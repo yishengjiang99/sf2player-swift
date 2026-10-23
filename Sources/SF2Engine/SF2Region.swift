@@ -98,6 +98,8 @@ public struct SF2Region: Equatable, @unchecked Sendable {
     public var keynumToModEnvHold = 0, keynumToModEnvDecay = 0
     /// G-02 substitution generators keynum (#46) / velocity (#47); nil = use the MIDI value.
     public var keynumOverride: Int?, velocityOverride: Int?
+    /// G-11: chorusEffectsSend (#15) / reverbEffectsSend (#16) in 0.1 % units (0 ... 1000).
+    public var chorusSend = 0, reverbSend = 0
     /// Final modulator list (defaults + instrument + preset, section 9.5); nil = engine defaults.
     public var modulators: [SF2Modulator]?
 
@@ -132,6 +134,7 @@ public struct SF2Region: Equatable, @unchecked Sendable {
             && a.keynumToVolEnvHold == b.keynumToVolEnvHold && a.keynumToVolEnvDecay == b.keynumToVolEnvDecay
             && a.keynumToModEnvHold == b.keynumToModEnvHold && a.keynumToModEnvDecay == b.keynumToModEnvDecay
             && a.modulators == b.modulators && a.keynumOverride == b.keynumOverride && a.velocityOverride == b.velocityOverride
+            && a.chorusSend == b.chorusSend && a.reverbSend == b.reverbSend
     }
 }
 

@@ -662,6 +662,8 @@ public final class SF2SoundFont: @unchecked Sendable {
             region.keynumToModEnvDecay = g[Gen.keynumToModEnvDecay] ?? 0
             region.initialFilterQCb = max(0, min(960, region.initialFilterQCb))
             // G-02: substitution generators, 0...127 (else ignored).
+            region.chorusSend = max(0, min(1000, g[Gen.chorusEffectsSend] ?? 0))
+            region.reverbSend = max(0, min(1000, g[Gen.reverbEffectsSend] ?? 0))
             region.keynumOverride = g[Gen.keynum].flatMap { (0 ... 127).contains($0) ? $0 : nil }
             region.velocityOverride = g[Gen.velocity].flatMap { (0 ... 127).contains($0) ? $0 : nil }
         }
