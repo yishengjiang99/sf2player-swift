@@ -7,7 +7,7 @@ import XCTest
 final class ComplianceMatrixTests: XCTestCase {
     /// Work-in-progress switch: while false, `pending` rows make this test skip (listing them)
     /// instead of fail. Set to true once every row is pass / n/a.
-    static let matrixMustBeComplete = false
+    static let matrixMustBeComplete = true
 
     struct Row { var id: String; var tests: [String]; var status: String }
 

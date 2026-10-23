@@ -3,3 +3,4 @@
 models/
 Package.resolved
 .build-asan/
+diff-report.md

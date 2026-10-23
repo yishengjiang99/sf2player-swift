@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Renders a fixed set of notes through SF2Engine (.spec) and FluidSynth and writes diff-report.md:
+# per case, RMS level difference (dB), envelope-shape difference (max |dB| over 10 ms windows above
+# -60 dB), f0 difference (cents) and release-tail time difference. Informational: FluidSynth deviates
+# from the 2.01 text in places (see docs/SF2_COMPLIANCE.md "Deviations from FluidSynth").
+# usage: scripts/diff-fluidsynth [font.sf2] [report.md]   (needs fluidsynth on PATH, python3)
+set -euo pipefail
+cd "$(dirname "$0")/.."
+FONT="${1:-models/GeneralUser-GS.sf2}"
+REPORT="${2:-diff-report.md}"
+OUT="${DIFF_OUT:-.build/diff-fluidsynth}"
+mkdir -p "$OUT"
+command -v fluidsynth >/dev/null || { echo "fluidsynth not found" >&2; exit 3; }
+swift build -c release --product sf2-spec-render >/dev/null
+BIN="$(swift build -c release --show-bin-path)/sf2-spec-render"
+# bank program key velocity hold tail name
+CASES="0 0 60 100 1.0 1.5 piano-C4
+0 0 36 127 1.0 1.5 piano-C2-ff
+0 0 84 40 1.0 1.5 piano-C6-pp
+0 24 64 100 1.0 1.0 nylon-guitar
+0 40 67 100 1.5 1.0 violin
+0 48 60 100 1.5 1.5 strings
+0 56 72 110 1.0 0.8 trumpet
+0 73 79 90 1.0 0.8 flute
+0 19 48 100 1.5 1.0 organ
+0 33 40 110 1.0 0.8 bass
+128 0 36 110 0.5 0.5 kick
+128 0 38 110 0.5 0.5 snare
+128 0 42 90 0.3 0.5 closed-hat"
+echo "$CASES" | while read -r bank prog key vel hold tail name; do
+  "$BIN" "$FONT" "$bank" "$prog" "$key" "$vel" "$hold" "$tail" "$OUT/$name.swift.wav" 0
+  python3 scripts/make-midi.py "$bank" "$prog" "$key" "$vel" "$hold" "$tail" "$OUT/$name.mid"
+  fluidsynth -q -n -i -R 0 -C 0 -g 1.0 -r 44100 -F "$OUT/$name.fluid.wav" "$FONT" "$OUT/$name.mid" >/dev/null 2>&1
+done
+python3 scripts/diff-report.py "$OUT" "$REPORT" $(echo "$CASES" | awk '{print $7}')
+echo "wrote $REPORT"

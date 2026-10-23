@@ -12,6 +12,8 @@ let package = Package(
     ],
     targets: [
         .target(name: "SF2Engine"),
+        // Dev tool for scripts/diff-fluidsynth: renders one note through the .spec path to a WAV.
+        .executableTarget(name: "sf2-spec-render", dependencies: ["SF2Engine"]),
         .testTarget(name: "SF2EngineTests", dependencies: ["SF2Engine"]),
     ]
 )
