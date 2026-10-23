@@ -32,8 +32,9 @@ engine.renderRange(&left, &right)
 
 ## Fidelity modes
 
-- `.gbk` (default): bit-for-bit port of gbk's renderer. Unchanged by the compliance work.
-- `.spec`: SoundFont **2.01** (`docs/SF2_COMPLIANCE.md` maps every spec requirement to a test).
+- `.spec` (the only mode): SoundFont **2.01** (`docs/SF2_COMPLIANCE.md` maps every spec requirement to a test).
+- `.gbk`: an alias of `.spec`. gbk's JS engine is now a 2.01 port of this engine (gbk pin `eee3c440335b`,
+  branch `sf2-201-compliance`), and the two render the same within 1e-6 per sample (`.github/workflows/ci.yml`, job `parity-gbk`).
   Files with `ifil >= 2.04` additionally get the 2.04 behaviour, decided in one place (`SF2SpecVersion`).
 
 ```swift
@@ -54,6 +55,13 @@ Effects: each `.spec` voice feeds reverb and chorus send buses (`reverbEffectsSe
 reverb and chorus (`engine.effectsEnabled = false` turns them off); the aux overload
 `renderRange(l, r, reverbL:, reverbR:, chorusL:, chorusR:, count)` returns the dry mix plus the raw
 send buses for a host's own effects. Both are real-time safe.
+
+Master bus (non-normative, after the voices and fx; mirrors gbk `src/sf2/master-bus.ts`):
+`masterGainDb` (default -3 dB) feeds a stereo-linked compressor (-6 dBFS, 4:1, 6 dB knee, 5/100 ms), then a
+lookahead brickwall limiter (-0.3 dBFS, 50 ms release, 1.5 ms lookahead), then a safety soft clip. The output
+never reaches ±1.0. `engine.masterDynamicsEnabled = false` turns it off, and `engine.masterParams` tunes it.
+It is real-time safe. `SF2OfflineRenderer.renderOfflineSequence(..., masterDynamicsEnabled:, masterGainDb:)` exposes
+the same settings, and the WAV writer clamps to ±1 before int16.
 
 Real-time API (no allocation, locks or ARC): `EngineEvent`, `TrackRT`, `dispatch(_:)`,
 `renderScheduled(...)` (pointer form), `setStoreRT`, `setTrackRT`, `resetTracksRT`,

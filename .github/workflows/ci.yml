@@ -32,3 +32,19 @@ jobs:
         with:
           name: diff-report
           path: diff-report.md
+  parity-gbk:
+    # Cross-engine parity: gbk JS engine (pinned) vs this engine's sf2-parity-render (tolerance 1e-6 per sample).
+    runs-on: ubuntu-latest
+    container: swift:6.0
+    steps:
+      - uses: actions/checkout@v4
+      - run: apt-get update -qq && apt-get install -y -qq curl git ca-certificates >/dev/null
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: swift build -c release --product sf2-parity-render
+      - run: |
+          git clone -q https://github.com/yishengjiang99/gbk.git ../gbk
+          git -C ../gbk checkout -q eee3c440335b9fa1772a02acb041871c357e44d8
+      - run: cd ../gbk && npm ci --ignore-scripts
+      - run: cd ../gbk && SF2_PARITY_SWIFT_BIN=$GITHUB_WORKSPACE/.build/release/sf2-parity-render node --import tsx/esm --test test/sf2-cross-engine-parity.test.ts

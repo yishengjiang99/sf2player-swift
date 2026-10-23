@@ -1,8 +1,10 @@
 # SoundFont 2.01 compliance matrix
 
 Reference: SoundFont 2.01 Technical Specification, July 23 1998 (`sfspec21.pdf`). Scope: the
-`SF2Fidelity.spec` path with `SF2LoadOptions.strict`. `.gbk` is a bit-exact port of gbk @ b43f004
-and is intentionally *not* compliant.
+`SF2Fidelity.spec` path with `SF2LoadOptions.strict`. `.gbk` is now an alias of `.spec`. The gbk JS engine
+was re-ported from this engine, and the pin is gbk `eee3c440335b9fa1772a02acb041871c357e44d8` (branch `sf2-201-compliance`, PR yishengjiang99/gbk#38).
+Its docs/SF2_COMPLIANCE.md uses the same IDs and test names. Cross-engine parity tolerance is 1e-6 per sample;
+the worst observed on Linux is 2.3e-10.
 
 `testComplianceMatrixIsCovered` (Tests/SF2EngineTests/ComplianceMatrixTests.swift) parses this table:
 every test named must exist under `Tests/`; status must be `pass`, `n/a (reason)` or `pending`
@@ -93,3 +95,13 @@ every test named must exist under `Tests/`; status must be `pass`, `n/a (reason)
 | X-01 | §11 | Silicon SoundFonts (ROM header format) | — | n/a (no ROM hardware in this engine) |
 | X-02 | §5 (re-write clauses) | Rules for re-writing files | — | n/a (package is read-only; no writer) |
 | X-03 | §7.10 | linkedSample circular lists | — | n/a (spec: not currently fully defined; treated as mono, see S-10) |
+
+## Master bus (non-normative)
+
+SoundFont 2.01 defines no master output stage. `SF2MasterBus.swift` (mirrored by gbk `src/sf2/master-bus.ts`)
+applies one after the voice mix and the fx returns, in `renderRange` / `renderScheduled`. The stages are
+`masterGainDb` (-3 dB), then a compressor (-6 dBFS, 4:1, 6 dB knee, 5/100 ms), then a lookahead limiter (ceiling
+-0.3 dBFS, 50 ms, 1.5 ms lookahead), then a safety soft clip (unity below 0.9·ceiling, tanh knee bounded by the
+ceiling). The output is always < 1.0. `masterDynamicsEnabled` turns it off. The compliance tests above
+measure the synthesis model with it off and gain 0 dB. The aux-bus render (G-11) is pre-master. Tests: MasterBusTests.
+
