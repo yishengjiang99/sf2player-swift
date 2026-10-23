@@ -11,7 +11,11 @@ import Foundation
 public struct SF2SynthEvent: @unchecked Sendable {
     /// `.controlChange`: `note` = controller number, `velocity` = value (MIDI channel `channel`).
     /// `.pitchBend`: `velocity` = 14-bit value 0...16383 (8192 = center). Both apply only in `.spec`.
-    public enum Kind: UInt8, Sendable { case noteOn, noteOff, setPreset, setControllers, controlChange, pitchBend }
+    /// `.programChange`: `note` = program (bank from the channel's CC0, channel 10 = bank 128; needs
+    /// `loadPrograms(from:)`). `.channelPressure`: `velocity` = value. `.polyPressure`: `note`, `velocity` = value.
+    public enum Kind: UInt8, Sendable {
+        case noteOn, noteOff, setPreset, setControllers, controlChange, pitchBend, programChange, channelPressure, polyPressure
+    }
     public var kind: Kind
     public var frame: Int?
     public var seq: Int = 0
@@ -53,6 +57,15 @@ public struct SF2SynthEvent: @unchecked Sendable {
     /// `value`: 14-bit 0...16383, 8192 = no bend.
     public static func pitchBend(_ value: Int, frame: Int? = nil, seq: Int = 0, trackIndex: Int? = nil, channel: Int) -> Self {
         Self(kind: .pitchBend, frame: frame, seq: seq, trackIndex: trackIndex, channel: channel, velocity: value)
+    }
+    public static func programChange(_ program: Int, frame: Int? = nil, seq: Int = 0, trackIndex: Int? = nil, channel: Int) -> Self {
+        Self(kind: .programChange, frame: frame, seq: seq, trackIndex: trackIndex, channel: channel, note: program)
+    }
+    public static func channelPressure(_ value: Int, frame: Int? = nil, seq: Int = 0, trackIndex: Int? = nil, channel: Int) -> Self {
+        Self(kind: .channelPressure, frame: frame, seq: seq, trackIndex: trackIndex, channel: channel, velocity: value)
+    }
+    public static func polyPressure(note: Int, value: Int, frame: Int? = nil, seq: Int = 0, trackIndex: Int? = nil, channel: Int) -> Self {
+        Self(kind: .polyPressure, frame: frame, seq: seq, trackIndex: trackIndex, channel: channel, note: note, velocity: value)
     }
     public static func setControllers(trackIndex: Int? = nil, cc7Volume: Double? = nil, cc10Pan: Double? = nil, cc11Expression: Double? = nil,
                                       pan: Double? = nil, gain: Double? = nil) -> Self {
@@ -124,6 +137,14 @@ struct ChannelRT {
     var rpnMsb: UInt8 = 127, rpnLsb: UInt8 = 127
     var pressure: Int32 = 0
     var list: Int32 = -1
+    var program: Int32 = 0
+    /// MIDI-08: whether the most recent parameter select was NRPN (CC99/98) rather than RPN (CC101/100).
+    var paramIsNRPN = false
+    /// N-01...N-03: SoundFont NRPN mode (CC99 = 120), selected generator (-1 none), LSB accumulator.
+    var nrpnActive = false
+    var nrpnSelect: Int32 = -1
+    var nrpnAccum: Int32 = 0
+    var sostenuto = false
 }
 
 struct Voice {
@@ -146,6 +167,11 @@ struct Voice {
     var regModEnvPitch = 0.0, regModLfoFc = 0.0, regModEnvFc = 0.0, regModLfoVol = 0.0
     var baseRate0 = 1.0, trackGain = 1.0
     var modEnvToPitch = 0.0, modLfoToVol = 0.0
+    // .spec channel functions: key held, deferred by sustain / sostenuto, region list (exclusive scope),
+    // effective key / velocity (G-02).
+    var keyDown = true, deferred = false, sostenuto = false
+    var list: Int32 = -1
+    var effKey: Int32 = 0, effVel: Int32 = 0
 
     init(sr: Double) {
         volEnv = VolEnv(sr: sr); modEnv = ModEnv(sr: sr); modLfo = LFO(sr: sr); vibLfo = LFO(sr: sr); lpf = TwoPoleLPF(sr: sr)
@@ -181,6 +207,10 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         var chans: UnsafeMutablePointer<ChannelRT>
         /// 16 x 128 controller values.
         var ccs: UnsafeMutablePointer<UInt8>
+        /// 16 x 64 NRPN generator offsets (N-04), 16 x 128 poly pressure, 129 x 128 program -> list id.
+        var nrpn: UnsafeMutablePointer<Double>
+        var poly: UnsafeMutablePointer<UInt8>
+        var programs: UnsafeMutablePointer<Int32>
     }
 
     public let outSr: Double
@@ -207,9 +237,15 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         chans.initialize(repeating: ChannelRT(), count: 16)
         let ccs = UnsafeMutablePointer<UInt8>.allocate(capacity: 16 * 128)
         ccs.initialize(repeating: 0, count: 16 * 128)
+        let nrpn = UnsafeMutablePointer<Double>.allocate(capacity: 16 * 64)
+        nrpn.initialize(repeating: 0, count: 16 * 64)
+        let poly = UnsafeMutablePointer<UInt8>.allocate(capacity: 16 * 128)
+        poly.initialize(repeating: 0, count: 16 * 128)
+        let programs = UnsafeMutablePointer<Int32>.allocate(capacity: 129 * 128)
+        programs.initialize(repeating: -1, count: 129 * 128)
         st = .allocate(capacity: 1)
         st.initialize(to: State(maxVoices: mv, capacity: cap, voices: voices, order: order, free: free, freeCount: cap,
-                                tracks: tracks, store: store.hdr, chans: chans, ccs: ccs))
+                                tracks: tracks, store: store.hdr, chans: chans, ccs: ccs, nrpn: nrpn, poly: poly, programs: programs))
         resetChannelsRT()
     }
 
@@ -218,7 +254,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         s.voices.deinitialize(count: s.capacity); s.voices.deallocate()
         s.order.deallocate(); s.free.deallocate()
         s.tracks.deinitialize(count: Self.maxTracks); s.tracks.deallocate()
-        s.chans.deallocate(); s.ccs.deallocate()
+        s.chans.deallocate(); s.ccs.deallocate(); s.nrpn.deallocate(); s.poly.deallocate(); s.programs.deallocate()
         st.deinitialize(count: 1); st.deallocate()
     }
 
@@ -384,6 +420,27 @@ public final class Sf2SynthEngine: @unchecked Sendable {
             for i in 0 ..< 128 { cc[i] = 0 }
             cc[7] = 100; cc[10] = 64; cc[11] = 127
             cc[100] = 127; cc[101] = 127
+            for k in 0 ..< 64 { s.nrpn[c * 64 + k] = 0 }
+            for k in 0 ..< 128 { s.poly[c * 128 + k] = 0 }
+        }
+    }
+
+    /// Non-real-time: resolves every (bank 0...128, program 0...127) of `sf` to a `.spec` region list
+    /// for `.programChange` (MIDI-07). Exact (preset, bank) first match (Z-12); missing pairs use the
+    /// engine's bank-0 / any-bank fallback (policy, not SoundFont 2.01).
+    public func loadPrograms(from sf: SF2SoundFont) throws {
+        var byPreset: [Int: Int32] = [:]
+        for bank in 0 ... 128 {
+            for prog in 0 ... 127 {
+                var id: Int32 = -1
+                if let p = sf.resolvePresetIndex(program: prog, bank: bank) {
+                    if let hit = byPreset[p] { id = hit } else {
+                        id = regionStore.add(try sf.regionList(forPreset: p, fidelity: .spec))
+                        byPreset[p] = id
+                    }
+                }
+                st.pointee.programs[bank * 128 + prog] = id
+            }
         }
     }
 
@@ -459,7 +516,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
             let velocity = Int(msg.velocity)
             // MIDI-01 (9.2): in .spec a note-on with velocity 0 is a note-off.
             if s.pointee.spec && velocity == 0 {
-                releaseNote(msg.note, trackIndex: msg.trackIndex, channel: msg.channel)
+                keyOffSpec(msg.note, trackIndex: msg.trackIndex, channel: msg.channel)
                 return
             }
             var track: UnsafeMutablePointer<TrackRT>?
@@ -477,7 +534,10 @@ public final class Sf2SynthEngine: @unchecked Sendable {
                 let r = base + k
                 if note >= r.pointee.keyLo && note <= r.pointee.keyHi && velocity >= r.pointee.velLo && velocity <= r.pointee.velHi {
                     any = true
-                    if r.pointee.exclusiveClass != 0 { chokeExclusive(r.pointee.exclusiveClass, trackIndex: msg.trackIndex) }
+                    if r.pointee.exclusiveClass != 0 {
+                        if s.pointee.spec { chokeExclusiveSpec(r.pointee.exclusiveClass, channel: msg.channel >= 0 ? msg.channel : 0, list: listId) }
+                        else { chokeExclusive(r.pointee.exclusiveClass, trackIndex: msg.trackIndex) }
+                    }
                 }
             }
             if !any { return }
@@ -500,15 +560,17 @@ public final class Sf2SynthEngine: @unchecked Sendable {
                 guard s.pointee.freeCount > 0 else { continue }
                 s.pointee.freeCount -= 1
                 let slot = s.pointee.free[s.pointee.freeCount]
+                s.pointee.voices[Int(slot)].list = listId
                 makeVoice(s.pointee.voices + Int(slot), r, note: note, velocity: velocity,
                           channel: msg.channel >= 0 ? msg.channel : 0, trackIndex: msg.trackIndex,
-                          trackPanPos: trackPanPos, trackVolumeMul: trackVolumeMul)
+                          trackPanPos: trackPanPos, trackVolumeMul: trackVolumeMul, list: listId)
                 s.pointee.order[s.pointee.count] = slot
                 s.pointee.count += 1
             }
 
         case SF2SynthEvent.Kind.noteOff.rawValue:
-            releaseNote(msg.note, trackIndex: msg.trackIndex, channel: msg.channel)
+            if s.pointee.spec { keyOffSpec(msg.note, trackIndex: msg.trackIndex, channel: msg.channel) }
+            else { releaseNote(msg.note, trackIndex: msg.trackIndex, channel: msg.channel) }
 
         case SF2SynthEvent.Kind.setControllers.rawValue:
             @inline(__always) func cc(_ x: Double) -> Double { max(0, min(127, Double(Int32(truncatingIfNeeded: Int64(max(-1e18, min(1e18, x))))))) }
@@ -531,6 +593,23 @@ public final class Sf2SynthEngine: @unchecked Sendable {
             guard s.pointee.spec, msg.channel >= 0, msg.channel < 16, msg.note >= 0, msg.note < 128 else { return }
             controlChangeRT(Int(msg.channel), Int(msg.note), Int(max(0, min(127, msg.velocity))))
 
+        case SF2SynthEvent.Kind.programChange.rawValue:
+            guard s.pointee.spec, msg.channel >= 0, msg.channel < 16, msg.note >= 0, msg.note < 128 else { return }
+            let c = Int(msg.channel)
+            s.pointee.chans[c].program = msg.note
+            let bank = c == 9 ? 128 : Int(s.pointee.ccs[c * 128])
+            s.pointee.chans[c].list = s.pointee.programs[bank * 128 + Int(msg.note)]
+
+        case SF2SynthEvent.Kind.channelPressure.rawValue:
+            guard s.pointee.spec, msg.channel >= 0, msg.channel < 16 else { return }
+            s.pointee.chans[Int(msg.channel)].pressure = max(0, min(127, msg.velocity))
+            updateChannelVoices(Int(msg.channel))
+
+        case SF2SynthEvent.Kind.polyPressure.rawValue:
+            guard s.pointee.spec, msg.channel >= 0, msg.channel < 16, msg.note >= 0, msg.note < 128 else { return }
+            s.pointee.poly[Int(msg.channel) * 128 + Int(msg.note)] = UInt8(max(0, min(127, msg.velocity)))
+            updateChannelVoices(Int(msg.channel))
+
         case SF2SynthEvent.Kind.pitchBend.rawValue:
             guard s.pointee.spec, msg.channel >= 0, msg.channel < 16 else { return }
             s.pointee.chans[Int(msg.channel)].bend = max(0, min(16383, msg.velocity))
@@ -551,6 +630,53 @@ public final class Sf2SynthEngine: @unchecked Sendable {
                 v.pointee.volEnv.noteOff(); v.pointee.modEnv.noteOff()
                 if v.pointee.loopUntilReleaseThenTail { v.pointee.inReleaseTail = true }
             }
+        }
+    }
+
+    /// MIDI-02/03 key-off: deferred while CC64 is down or the note is held by sostenuto.
+    @inline(__always) func keyOffSpec(_ note: Int32, trackIndex: Int32, channel: Int32) {
+        let s = st
+        for i in 0 ..< s.pointee.count {
+            let v = s.pointee.voices + Int(s.pointee.order[i])
+            let sameTrack = trackIndex < 0 || v.pointee.trackIndex == trackIndex
+            let sameChannel = channel < 0 || v.pointee.channel == channel
+            guard v.pointee.note == note && sameTrack && sameChannel && v.pointee.keyDown else { continue }
+            keyOffVoice(v)
+        }
+    }
+
+    @inline(__always) func keyOffVoice(_ v: UnsafeMutablePointer<Voice>) {
+        v.pointee.keyDown = false
+        let c = Int(max(0, min(15, v.pointee.channel)))
+        if st.pointee.ccs[c * 128 + 64] >= 64 || v.pointee.sostenuto { v.pointee.deferred = true; return }
+        v.pointee.deferred = false
+        v.pointee.volEnv.noteOff(); v.pointee.modEnv.noteOff()
+        if v.pointee.loopUntilReleaseThenTail { v.pointee.inReleaseTail = true }
+    }
+
+    /// Releases deferred voices on `channel` that no pedal holds any more.
+    @inline(__always) func releaseDeferred(_ channel: Int) {
+        let s = st
+        let sustain = s.pointee.ccs[channel * 128 + 64] >= 64
+        for i in 0 ..< s.pointee.count {
+            let v = s.pointee.voices + Int(s.pointee.order[i])
+            guard Int(v.pointee.channel) == channel, v.pointee.deferred, !sustain, !v.pointee.sostenuto else { continue }
+            v.pointee.deferred = false
+            v.pointee.volEnv.noteOff(); v.pointee.modEnv.noteOff()
+            if v.pointee.loopUntilReleaseThenTail { v.pointee.inReleaseTail = true }
+        }
+    }
+
+    /// G-12 (8.1.2 #57): terminate same-class voices of the same preset (region list) and channel rapidly.
+    static let exclusiveReleaseSec = 0.005
+    func chokeExclusiveSpec(_ exclusiveClass: Int, channel: Int32, list: Int32) {
+        let s = st
+        for i in 0 ..< s.pointee.count {
+            let v = s.pointee.voices + Int(s.pointee.order[i])
+            guard v.pointee.exclusiveClass == exclusiveClass, v.pointee.channel == channel, v.pointee.list == list else { continue }
+            v.pointee.volEnv.fastRelease(Self.exclusiveReleaseSec); v.pointee.modEnv.noteOff()
+            v.pointee.keyDown = false; v.pointee.deferred = false; v.pointee.sostenuto = false
+            if v.pointee.loopUntilReleaseThenTail { v.pointee.inReleaseTail = true }
         }
     }
 
@@ -580,10 +706,15 @@ public final class Sf2SynthEngine: @unchecked Sendable {
     }
 
     private func makeVoice(_ v: UnsafeMutablePointer<Voice>, _ r: UnsafeMutablePointer<VoiceRegion>, note: Int, velocity: Int,
-                           channel: Int32, trackIndex: Int32, trackPanPos: Double, trackVolumeMul: Double) {
+                           channel: Int32, trackIndex: Int32, trackPanPos: Double, trackVolumeMul: Double, list: Int32 = -1) {
         let reg = r.pointee
         let sr = outSr
         var voice = Voice(sr: sr)
+        voice.list = list
+        // G-02: substitution generators replace the MIDI key / velocity for this zone (.spec).
+        let effKey = st.pointee.spec && reg.keynum >= 0 ? reg.keynum : note
+        let effVel = st.pointee.spec && reg.velocity >= 0 ? reg.velocity : velocity
+        voice.effKey = Int32(truncatingIfNeeded: effKey); voice.effVel = Int32(truncatingIfNeeded: effVel)
         voice.note = Int32(truncatingIfNeeded: note); voice.channel = channel; voice.trackIndex = trackIndex
         voice.velocity = Int32(truncatingIfNeeded: velocity)
         voice.start = Double(reg.start); voice.end = Double(reg.end)
@@ -592,7 +723,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         voice.looping = reg.sampleModes == 1 || reg.sampleModes == 3
         voice.loopUntilReleaseThenTail = reg.sampleModes == 3
         // regionBaseRate
-        let keyTrackCents = Double((note - reg.root) * reg.scaleTuning)
+        let keyTrackCents = Double((effKey - reg.root) * reg.scaleTuning)
         let tuneCents = Double(reg.coarseTune * 100 + reg.fineTune)
         let srRatio = Double(reg.sampleRate) / sr
         voice.baseRate = centsToRatio(keyTrackCents + tuneCents) * srRatio
@@ -616,7 +747,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         voice.modEnvToFc = Double(reg.modEnvToFilterFcCents)
         voice.modLfoToFc = Double(reg.modLfoToFilterFcCents)
         if st.pointee.spec {
-            specVoice(&voice, r, note: note, velocity: velocity, trackGain: trackVolumeMul)
+            specVoice(&voice, r, note: effKey, velocity: effVel, trackGain: trackVolumeMul)
         }
         voice.volEnv.noteOn()
         voice.modEnv.noteOn()
@@ -625,18 +756,23 @@ public final class Sf2SynthEngine: @unchecked Sendable {
 
     // MARK: - SoundFont 2.04 (.spec)
 
-    @inline(__always) private func modInputs(_ channel: Int32, note: Int, velocity: Int) -> ModInputs {
+    @inline(__always) private func modInputs(_ channel: Int32, note: Int, velocity: Int, midiNote: Int) -> ModInputs {
         let c = Int(max(0, min(15, channel)))
         let ch = st.pointee.chans[c]
+        let poly = midiNote >= 0 && midiNote < 128 ? Int(st.pointee.poly[c * 128 + midiNote]) : 0
         return ModInputs(velocity: velocity, key: note, cc: UnsafePointer(st.pointee.ccs + c * 128), pitchWheel: Int(ch.bend),
-                         pitchWheelSensitivity: ch.pws, channelPressure: Int(ch.pressure))
+                         pitchWheelSensitivity: ch.pws, channelPressure: Int(ch.pressure), polyPressure: poly)
     }
 
     /// Sums every modulator into `d` (indexed by destination generator; `SF2Modulator.slotCount` slots).
     @inline(__always) private func evalMods(_ voice: Voice, _ d: UnsafeMutablePointer<Double>) {
         for i in 0 ..< SF2Modulator.slotCount { d[i] = 0 }
+        // N-04: NRPN offsets add to the generators like a modulator.
+        let c = Int(max(0, min(15, voice.channel)))
+        let nr = st.pointee.nrpn + c * 64
+        for k in 0 ..< 64 { d[k] = nr[k] }
         guard let mods = voice.mods else { return }
-        let inputs = modInputs(voice.channel, note: Int(voice.note), velocity: Int(voice.velocity))
+        let inputs = modInputs(voice.channel, note: Int(voice.effKey), velocity: Int(voice.effVel), midiNote: Int(voice.note))
         for k in 0 ..< voice.modCount {
             let m = mods[k]
             d[Int(m.dest)] += modValue(m, inputs)
@@ -679,6 +815,10 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         voice.regModEnvPitch = Double(reg.modEnvToPitchCents)
         voice.regModLfoFc = Double(reg.modLfoToFilterFcCents); voice.regModEnvFc = Double(reg.modEnvToFilterFcCents)
         voice.regModLfoVol = Double(reg.modLfoToVolumeCb)
+        // MIDI-04 soft pedal (CC66 >= 64 at note-on): -6 dB (60 cB) and -600 cents cutoff (engine choice).
+        if st.pointee.ccs[Int(max(0, min(15, voice.channel))) * 128 + 66] >= 64 {
+            voice.regAtten += Self.softPedalAttenuationCb; voice.regFc -= Self.softPedalFcCents
+        }
         voice.baseRate0 = voice.baseRate
         voice.trackGain = trackGain
         voice.trackVolumeMul = trackGain
@@ -713,6 +853,18 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         }
     }
 
+    public static let softPedalAttenuationCb = 60.0
+    public static let softPedalFcCents = 600.0
+
+    /// N-05 (9.6.3): NRPN data spans the generator's useful range; if the span exceeds 8192 units it
+    /// is halved until <= 8192, i.e. each data step is 2^k native units (interpretation documented).
+    static func nrpnScale(_ gen: Int) -> Double {
+        guard let (lo, hi) = GenInfo.valueRange(gen) else { return 0 }
+        var span = Double(hi - lo), step = 1.0
+        while span > 8192 { span /= 2; step *= 2 }
+        return step
+    }
+
     /// Re-evaluates the modulators of every sounding voice on `channel` (after a CC or pitch-wheel change).
     func updateChannelVoices(_ channel: Int) {
         let s = st
@@ -732,25 +884,89 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         let s = st.pointee
         let ch = s.chans + channel
         let ccs = s.ccs + channel * 128
+        let old = ccs[cc]
         ccs[cc] = UInt8(value)
         switch cc {
-        case 101: ch.pointee.rpnMsb = UInt8(value)
-        case 100: ch.pointee.rpnLsb = UInt8(value)
-        case 98, 99: ch.pointee.rpnMsb = 127; ch.pointee.rpnLsb = 127   // NRPN selected: data entry is not RPN 0
+        case 101: ch.pointee.rpnMsb = UInt8(value); ch.pointee.paramIsNRPN = false
+        case 100: ch.pointee.rpnLsb = UInt8(value); ch.pointee.paramIsNRPN = false
+        case 99:
+            ch.pointee.rpnMsb = 127; ch.pointee.rpnLsb = 127   // NRPN selected: data entry is not RPN 0
+            ch.pointee.paramIsNRPN = true
+            ch.pointee.nrpnActive = value == 120                // N-01
+            ch.pointee.nrpnAccum = 0
+        case 98:
+            ch.pointee.rpnMsb = 127; ch.pointee.rpnLsb = 127
+            ch.pointee.paramIsNRPN = true
+            guard ch.pointee.nrpnActive else { break }
+            switch value {                                      // N-02 / N-03
+            case 0 ... 99:
+                let gen = Int(ch.pointee.nrpnAccum) + value
+                ch.pointee.nrpnAccum = 0
+                if gen < 61, GenInfo.valueRange(gen) != nil, gen != Gen.scaleTuning { ch.pointee.nrpnSelect = Int32(gen) }
+            case 100: ch.pointee.nrpnAccum += 100
+            case 101: ch.pointee.nrpnAccum += 1000
+            case 102: ch.pointee.nrpnAccum += 10000
+            default: break
+            }
         case 6:
-            if ch.pointee.rpnMsb == 0 && ch.pointee.rpnLsb == 0 {
+            if ch.pointee.paramIsNRPN {
+                // N-04: 14-bit data (CC6 << 7 | CC38), centered at 0x2000, applied when the MSB arrives.
+                if ch.pointee.nrpnActive && ch.pointee.nrpnSelect >= 0 {
+                    let g = Int(ch.pointee.nrpnSelect)
+                    let v = Double((value << 7) | Int(ccs[38])) - 8192
+                    s.nrpn[channel * 64 + g] = v * Self.nrpnScale(g)
+                }
+            } else if ch.pointee.rpnMsb == 0 && ch.pointee.rpnLsb == 0 {
                 ch.pointee.pws = Double(value) + Double(ccs[38]) / 100
             }
         case 38:
-            if ch.pointee.rpnMsb == 0 && ch.pointee.rpnLsb == 0 {
+            if !ch.pointee.paramIsNRPN && ch.pointee.rpnMsb == 0 && ch.pointee.rpnLsb == 0 {
                 ch.pointee.pws = Double(ccs[6]) + Double(value) / 100
             }
+        case 64:
+            if value < 64 && old >= 64 { releaseDeferred(channel) }           // MIDI-02
+        case 67:                                                                // MIDI-03
+            if value >= 64 && !ch.pointee.sostenuto {
+                ch.pointee.sostenuto = true
+                for i in 0 ..< s.count {
+                    let v = s.voices + Int(s.order[i])
+                    if Int(v.pointee.channel) == channel && v.pointee.spec && v.pointee.keyDown { v.pointee.sostenuto = true }
+                }
+            } else if value < 64 && ch.pointee.sostenuto {
+                ch.pointee.sostenuto = false
+                for i in 0 ..< s.count {
+                    let v = s.voices + Int(s.order[i])
+                    if Int(v.pointee.channel) == channel { v.pointee.sostenuto = false }
+                }
+                releaseDeferred(channel)
+            }
+        case 120:                                                               // MIDI-05 all sound off
+            for i in 0 ..< s.count {
+                let v = s.voices + Int(s.order[i])
+                if Int(v.pointee.channel) == channel { v.pointee.volEnv.kill(); v.pointee.finished = true }
+            }
+            return
+        case 123:                                                               // MIDI-05 all notes off
+            for i in 0 ..< s.count {
+                let v = s.voices + Int(s.order[i])
+                if Int(v.pointee.channel) == channel && v.pointee.spec && v.pointee.keyDown { keyOffVoice(v) }
+            }
         case 121:
-            // RP-015 reset all controllers: not volume / pan / bank / program.
-            for i in [1, 2, 4, 64, 65, 66, 67, 68, 69] { ccs[i] = 0 }
-            ccs[11] = 127; ccs[100] = 127; ccs[101] = 127
+            // RP-015 reset all controllers: not volume / pan / bank / program. MIDI-06 / N-06: also
+            // pedals, pressure, poly pressure and NRPN state / offsets.
+            ccs[1] = 0; ccs[2] = 0; ccs[4] = 0; ccs[64] = 0; ccs[65] = 0; ccs[66] = 0; ccs[67] = 0; ccs[68] = 0; ccs[69] = 0
+            ccs[11] = 127; ccs[100] = 127; ccs[101] = 127; ccs[98] = 127; ccs[99] = 127
             ch.pointee.rpnMsb = 127; ch.pointee.rpnLsb = 127
             ch.pointee.bend = 8192; ch.pointee.pressure = 0
+            ch.pointee.paramIsNRPN = false; ch.pointee.nrpnActive = false; ch.pointee.nrpnSelect = -1; ch.pointee.nrpnAccum = 0
+            ch.pointee.sostenuto = false
+            for k in 0 ..< 64 { s.nrpn[channel * 64 + k] = 0 }
+            for k in 0 ..< 128 { s.poly[channel * 128 + k] = 0 }
+            for i in 0 ..< s.count {
+                let v = s.voices + Int(s.order[i])
+                if Int(v.pointee.channel) == channel { v.pointee.sostenuto = false }
+            }
+            releaseDeferred(channel)
         default: break
         }
         updateChannelVoices(channel)

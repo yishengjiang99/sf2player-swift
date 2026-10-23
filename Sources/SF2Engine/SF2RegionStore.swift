@@ -23,6 +23,7 @@ struct VoiceRegion {
     var initialFilterQCb: Int
     var modEnvToPitchCents: Int, modLfoToVolumeCb: Int
     var keynumToVolEnvHold: Int, keynumToVolEnvDecay: Int, keynumToModEnvHold: Int, keynumToModEnvDecay: Int
+    var keynum = -1, velocity = -1
     /// Range in the store's modulator array (the defaults when the region has no list).
     var modStart = 0, modCount = 0
 
@@ -47,6 +48,7 @@ struct VoiceRegion {
         modEnvToPitchCents = r.modEnvToPitchCents; modLfoToVolumeCb = r.modLfoToVolumeCb
         keynumToVolEnvHold = r.keynumToVolEnvHold; keynumToVolEnvDecay = r.keynumToVolEnvDecay
         keynumToModEnvHold = r.keynumToModEnvHold; keynumToModEnvDecay = r.keynumToModEnvDecay
+        keynum = r.keynumOverride ?? -1; velocity = r.velocityOverride ?? -1
     }
 }
 

@@ -48,7 +48,7 @@ every test named must exist under `Tests/`; status must be `pass`, `n/a (reason)
 | S-10 | §7.10 | Stereo pairs: one voice per zone, own pan, pitch from right zone; invalid link → mono | test_S10_stereoPairsOneVoicePerZone | pending |
 | S-11 | §6.1 | Reads past end yield silence | test_S11_readPastEndIsSilent | pass |
 | G-01 | §9.1.1, §8.1.2 #51/52/56/58 | Pitch formula, measured f0 ±1 cent | test_G01_measuredPitch | pass |
-| G-02 | §8.1.1, §8.1.2 #46/47 | keynum / velocity substitution generators | test_G02_keynumVelocitySubstitution | pending |
+| G-02 | §8.1.1, §8.1.2 #46/47 | keynum / velocity substitution generators | test_G02_keynumVelocitySubstitution | pass |
 | G-03 | §8.1.2 #33–40, §9.1.7 | Volume envelope shape and timing | test_G03_volumeEnvelopeShape, test_G03_releaseFromAttackUsesCurrentLevel | pass |
 | G-04 | §8.1.2 #25–32 | Modulation envelope shape and timing (shape asserted on ModEnv directly; audio check via modEnvToPitch at sustain)| test_G04_modulationEnvelopeShape | pass |
 | G-05 | §8.1.2 #31/32/39/40 | Key-number envelope scaling (erratum: #32/#40 say hold, mean decay) | test_G05_keynumEnvelopeScaling | pending |
@@ -58,7 +58,7 @@ every test named must exist under `Tests/`; status must be `pass`, `n/a (reason)
 | G-09 | §8.1.2 #48 | initialAttenuation cB | test_G09_initialAttenuation | pass |
 | G-10 | §8.1.2 #17 | Linear pan law (L/(L+R) ±0.0058 ≈ 0.1 dB) | test_G10_linearPanLaw | pass |
 | G-11 | §8.1.2 #15/#16, §9.1.5 | Reverb/chorus sends and aux buses | test_G11_effectsSends | pending |
-| G-12 | §8.1.2 #57 | exclusiveClass: fast release, same preset + channel | test_G12_exclusiveClassFastReleaseSamePresetChannel | pending |
+| G-12 | §8.1.2 #57 | exclusiveClass: fast release, same preset + channel | test_G12_exclusiveClassFastReleaseSamePresetChannel | pass |
 | G-13 | §8.1.3 | Non-real-time generators fixed at note-on | test_G13_nonRealtimeGeneratorsFixedAtNoteOn | pending |
 | M-01 | §8.2, §8.2.4 | Source word layout; type > 3 → ignore modulator | test_M01_sourceLayoutAndUnknownType | pass |
 | M-02 | §8.2.1 | Undefined general / illegal CC sources → ignore modulator | test_M02_illegalSourcesIgnored | pass |
@@ -70,22 +70,22 @@ every test named must exist under `Tests/`; status must be `pass`, `n/a (reason)
 | M-08 | §9.5.1 | Output = amount·src·amtSrc | test_M08_modulatorOutput | pass |
 | M-09 | §7.4, §7.8, §9.5.1 | Modulator identity and merge rules | test_M09_modulatorMergeRules | pass |
 | M-10 | §8.4 | 2.01 default modulator list (10 entries, errata resolved) | test_M10_defaultModulators201 | pass |
-| M-11 | §8.2.1 | Channel pressure, poly pressure, key, velocity sources fed | test_M11_liveSources | pending |
+| M-11 | §8.2.1 | Channel pressure, poly pressure, key, velocity sources fed | test_M11_liveSources | pass |
 | M-12 | §10.5 | Modulated destinations re-clamped | test_M12_modulatedValuesReclamped | pass |
 | MIDI-01 | §9.2 | Note-on velocity 0 = note-off | test_MIDI01_velocityZeroIsNoteOff | pass |
-| MIDI-02 | §9.2 | CC64 sustain | test_MIDI02_sustainPedal | pending |
-| MIDI-03 | §9.2 | CC67 sostenuto | test_MIDI03_sostenuto | pending |
-| MIDI-04 | §9.2 | CC66 soft pedal | test_MIDI04_softPedal | pending |
-| MIDI-05 | §9.2 | CC120 all sound off / CC123 all notes off | test_MIDI05_allSoundOffAllNotesOff | pending |
-| MIDI-06 | §9.2 | CC121 reset all controllers | test_MIDI06_resetAllControllers | pending |
-| MIDI-07 | §9.2, §7.2 | Bank select + program change | test_MIDI07_programChange | pending |
-| MIDI-08 | §9.2, §9.6.3 | Data entry routed to RPN or NRPN | test_MIDI08_dataEntryRouting | pending |
-| N-01 | §9.6.1 | NRPN MSB 120 selects SoundFont mode | test_N01_nrpnMode | pending |
-| N-02 | §9.6.2 | NRPN LSB generator select + 100/1000/10000 accumulator | test_N02_nrpnSelectAccumulator | pending |
-| N-03 | §9.6.2 | Unknown / non-realtime / non-value select ignored | test_N03_nrpnIllegalSelect | pending |
-| N-04 | §9.6.3 | Data entry adds to generator on sounding and future voices | test_N04_nrpnDataEntryAdds | pending |
-| N-05 | §9.6.3 | Per-generator scale (interpretation documented) | test_N05_nrpnRange | pending |
-| N-06 | §9.6, §9.2 | CC121 clears NRPN offsets | test_N06_resetClearsNrpn | pending |
+| MIDI-02 | §9.2 | CC64 sustain | test_MIDI02_sustainPedal | pass |
+| MIDI-03 | §9.2 | CC67 sostenuto | test_MIDI03_sostenuto | pass |
+| MIDI-04 | §9.2 | CC66 soft pedal (engine amounts: +60 cB, −600 cents Fc at note-on) | test_MIDI04_softPedal | pass |
+| MIDI-05 | §9.2 | CC120 all sound off / CC123 all notes off | test_MIDI05_allSoundOffAllNotesOff | pass |
+| MIDI-06 | §9.2 | CC121 reset all controllers | test_MIDI06_resetAllControllers | pass |
+| MIDI-07 | §9.2, §7.2 | Bank select + program change | test_MIDI07_programChange | pass |
+| MIDI-08 | §9.2, §9.6.3 | Data entry routed to RPN or NRPN | test_MIDI08_dataEntryRouting | pass |
+| N-01 | §9.6.1 | NRPN MSB 120 selects SoundFont mode | test_N01_nrpnMode | pass |
+| N-02 | §9.6.2 | NRPN LSB generator select + 100/1000/10000 accumulator | test_N02_nrpnSelectAccumulator | pass |
+| N-03 | §9.6.2 | Unknown / non-realtime / non-value select ignored | test_N03_nrpnIllegalSelect | pass |
+| N-04 | §9.6.3 | Data entry adds to generator on sounding and future voices | test_N04_nrpnDataEntryAdds | pass |
+| N-05 | §9.6.3 | Per-generator scale: span halved until ≤ 8192 → 2^k native units per step (interpretation) | test_N05_nrpnRange | pass |
+| N-06 | §9.6, §9.2 | CC121 clears NRPN offsets | test_N06_resetClearsNrpn | pass |
 | E-01 | §10.1 | Structural errors name the rule and chunk; lenient collects warnings | test_E01_structuralErrorsNameRuleAndChunk | pass |
 | E-02 | §10.3 | Unknown enumerators ignored, never fail the load | test_E02_unknownEnumeratorsIgnored | pass |
 | E-03 | §10.4, §10.5 | Illegal values → default/ignore; out-of-range → clamp | test_E03_illegalValues | pass |
