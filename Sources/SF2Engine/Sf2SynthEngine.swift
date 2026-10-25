@@ -183,6 +183,8 @@ struct Voice {
     var chorusAmt = 0.0, reverbAmt = 0.0, regChorus = 0.0, regReverb = 0.0
     /// G-08: resonance in cB and whether the filter is out of circuit (Fc >= 20 kHz / 0.45 sr with Q <= 0).
     var qCb = 0.0
+    /// Whether the voice's modulator list already routes CC91 / CC93 to the sends (gbk `hasSendMods`).
+    var hasSendMods = false
 
     init(sr: Double) {
         volEnv = VolEnv(sr: sr); modEnv = ModEnv(sr: sr); modLfo = LFO(sr: sr); vibLfo = LFO(sr: sr); lpf = TwoPoleLPF(sr: sr)
@@ -229,6 +231,8 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         /// Master bus (non-normative), applied in renderRange / renderScheduled for every fidelity.
         var master: MasterBusRT
         var masterOn = true
+        /// gbk `sendCcModulators`: 8.4.8 / 8.4.9 CC91 / CC93 send fallback for voices whose list lacks them.
+        var sendCcMods = true
         var masterGainDb = -3.0
         var masterGain = pow(10, -3.0 / 20)
     }
@@ -811,6 +815,11 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         let c = Int(max(0, min(15, voice.channel)))
         let nr = st.pointee.nrpn + c * 64
         for k in 0 ..< 64 { d[k] = nr[k] }
+        if st.pointee.sendCcMods && !voice.hasSendMods {
+            let cc = st.pointee.ccs + c * 128
+            if cc[91] != 0 { d[16] += 200 * (Double(cc[91]) / 128) }   // 8.4.8: linear unipolar CC91 x 200
+            if cc[93] != 0 { d[15] += 200 * (Double(cc[93]) / 128) }   // 8.4.9: linear unipolar CC93 x 200
+        }
         guard let mods = voice.mods else { return }
         let inputs = modInputs(voice.channel, note: Int(voice.effKey), velocity: Int(voice.effVel), midiNote: Int(voice.note))
         for k in 0 ..< voice.modCount {
@@ -854,6 +863,13 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         voice.spec = true
         if let mods = h.mods, reg.modCount > 0, reg.modStart + reg.modCount <= h.modCount {
             voice.mods = UnsafePointer(mods + reg.modStart); voice.modCount = reg.modCount
+        }
+        voice.hasSendMods = false
+        if let m = voice.mods {
+            for k in 0 ..< voice.modCount {
+                let x = m[k]
+                if (x.dest == 15 || x.dest == 16) && (x.src & 0x80) != 0 && ((x.src & 0x7F) == 91 || (x.src & 0x7F) == 93) { voice.hasSendMods = true }
+            }
         }
         voice.regAtten = Double(reg.initialAttenuationCb); voice.regPan = Double(reg.pan)
         voice.regFc = Double(reg.initialFilterFcCents); voice.regQ = Double(reg.initialFilterQCb)
@@ -1132,6 +1148,14 @@ public final class Sf2SynthEngine: @unchecked Sendable {
     public var effectsEnabled: Bool {
         get { st.pointee.fxOn }
         set { st.pointee.fxOn = newValue }
+    }
+
+    /// gbk extension (default on): SoundFont 2.01 default modulators 8.4.8 (CC91 -> reverb send, 200) and 8.4.9
+    /// (CC93 -> chorus send, 200) for voices whose modulator list has neither (2.04 files and hand-built regions
+    /// omit them). Lists that route CC91 / CC93 to a send are left alone. Set while not rendering.
+    public var sendCcModulators: Bool {
+        get { st.pointee.sendCcMods }
+        set { st.pointee.sendCcMods = newValue }
     }
 
     /// Global reverb / chorus parameters (gbk `setEffectParams`; `enabled: false` is the off switch). Set while not rendering.

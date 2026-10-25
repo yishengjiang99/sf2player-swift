@@ -48,4 +48,28 @@ final class GbkSyncTests: XCTestCase {
         e.setEffectParams(SF2EffectsParams(enabled: false)); XCTAssertFalse(e.effectsEnabled)
         e.setEffectParams(SF2EffectsParams(enabled: true)); XCTAssertTrue(e.effectsEnabled)
     }
+
+    private func voice0(_ r: SpecRender) -> Voice { r.engine.st.pointee.voices[Int(r.engine.st.pointee.order[0])] }
+
+    /// gbk 4d788d7: CC91 / CC93 reach the sends of voices whose modulator list has no CC91 / CC93 send modulator.
+    func test_sendCcModulatorFallback() throws {
+        let wave = B.sine(cycles: 100, n: 4410)
+        var b204 = B.single(wave, loop: (0, 4410), instGens: [(Gen.sampleModes, 1)])
+        b204.ifil = (2, 4)                      // 2.04 defaults: no effects-send modulators
+        for on in [true, false] {
+            let r = try SpecRender(b204)
+            r.engine.sendCcModulators = on
+            r.cc(91, 127); r.cc(93, 64); r.noteOn(60)
+            XCTAssertEqual(voice0(r).reverbAmt, on ? 0.2 * 127 / 128 : 0, accuracy: 1e-12)
+            XCTAssertEqual(voice0(r).chorusAmt, on ? 0.2 * 64 / 128 : 0, accuracy: 1e-12)
+            r.cc(91, 0)                          // live: follows the controller
+            XCTAssertEqual(voice0(r).reverbAmt, 0, accuracy: 1e-12)
+        }
+        // 2.01 file: the default list already has 8.4.8 / 8.4.9, so the fallback must not double them.
+        let r = try SpecRender(B.single(wave, loop: (0, 4410), instGens: [(Gen.sampleModes, 1)]))
+        XCTAssertTrue(r.engine.sendCcModulators, "on by default (gbk)")
+        r.cc(91, 127); r.noteOn(60)
+        XCTAssertTrue(voice0(r).hasSendMods)
+        XCTAssertEqual(voice0(r).reverbAmt, 0.2 * 127 / 128, accuracy: 1e-12)
+    }
 }

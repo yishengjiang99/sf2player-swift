@@ -2,7 +2,7 @@
 // usage: sf2-parity-render <scenario.json> <out.f32>
 // Cross-engine parity tool: renders a scenario through Sf2SynthEngine `.spec` and writes interleaved
 // little-endian Float32 L/R frames. gbk's scripts/parity-render.ts reads the same scenario format.
-// Scenario: { font, sampleRate, frames, effects, masterGainDb, masterDynamics, strict, programs, maxVoices,
+// Scenario: { font, sampleRate, frames, effects, sendCcModulators (default false), masterGainDb, masterDynamics, strict, programs, maxVoices,
 //   tracks: [{trackIndex, preset, gain, pan, cc7Volume, cc10Pan, cc11Expression}], events: [{frame, type, channel, trackIndex,
 //   note, velocity, controller, value, program, preset, cc7Volume, cc10Pan, cc11Expression (setControllers)}] }   (preset = preset index -> setPreset with that region list)
 import Foundation
@@ -21,6 +21,8 @@ let sf = try SF2SoundFont(data: Data(contentsOf: URL(fileURLWithPath: fontPath))
 let engine = Sf2SynthEngine(outSr: sr, maxVoices: int(scen, "maxVoices") ?? 64)
 engine.fidelity = .spec
 engine.effectsEnabled = (scen["effects"] as? Bool) ?? false
+// gbk's parity renderer turns its CC91/93 send fallback off; scripts/compare-gbk passes true (gbk's engine default).
+engine.sendCcModulators = (scen["sendCcModulators"] as? Bool) ?? false
 if let g = scen["masterGainDb"] as? Double { engine.masterGainDb = g }
 if let d = scen["masterDynamics"] as? Bool { engine.masterDynamicsEnabled = d }
 if (scen["programs"] as? Bool) ?? false { try engine.loadPrograms(from: sf) }
