@@ -36,7 +36,8 @@ jobs:
           name: diff-report
           path: diff-report.md
   parity-gbk:
-    # Cross-engine parity: gbk JS engine (pinned) vs this engine's sf2-parity-render (tolerance 1e-6 per sample).
+    # Cross-engine parity: gbk JS engine (pinned) vs this engine's sf2-parity-render (tolerance 1e-6 per sample), then
+    # whole-song renders compared by scripts/compare-gbk/run.
     runs-on: ubuntu-latest
     container: swift:6.0
     steps:
@@ -48,6 +49,11 @@ jobs:
       - run: swift build -c release --product sf2-parity-render
       - run: |
           git clone -q https://github.com/yishengjiang99/gbk.git ../gbk
-          git -C ../gbk checkout -q 4a3da6234c512634df153273adf362fe60ad4dd5
+          git -C ../gbk checkout -q 7cda7b3a8cf02aae58abb2848ac78b251b10d9c4
       - run: cd ../gbk && npm ci --ignore-scripts
       - run: cd ../gbk && SF2_PARITY_SWIFT_BIN=$GITHUB_WORKSPACE/.build/release/sf2-parity-render node --import tsx/esm --test test/sf2-cross-engine-parity.test.ts
+      # Whole-song JS vs Swift renders (gbk default engine settings, effects + master bus on); fails unless near bit-exact.
+      - run: apt-get install -y -qq python3 python3-numpy python3-scipy >/dev/null
+      - run: COMPARE_GATE=1 scripts/compare-gbk/run ../gbk compare-gbk-out
+      - if: always()
+        run: cat compare-gbk-out/report.md >> "$GITHUB_STEP_SUMMARY" || true

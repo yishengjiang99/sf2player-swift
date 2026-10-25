@@ -28,3 +28,17 @@ for r in rows:
     print(f"| {r['song']} | {r['seconds']} | {r['corr']} | {r['diff_rms_db_rel']} | {r['diff_peak']} | {r['lufs_js']} / {r['lufs_swift']} ({r['lufs_delta']:+}) | {r['peak_js']} / {r['peak_swift']} | {r['tail_end_js_s']} / {r['tail_end_swift_s']} | {b} |")
 PY
 cat "$OUT/report.md"
+# COMPARE_GATE=1: fail unless every song is near bit-exact (libm ulp residue only): correlation >= 0.999999,
+# difference RMS <= -100 dB relative to the JS render, |LUFS delta| <= 0.01, same tail end (+-10 ms).
+if [ "${COMPARE_GATE:-0}" = 1 ]; then
+  python3 - "$OUT/report.jsonl" <<'PY'
+import json, sys
+bad = []
+for r in map(json.loads, open(sys.argv[1])):
+    if not (r["corr"] >= 0.999999 and r["diff_rms_db_rel"] <= -100 and abs(r["lufs_delta"]) <= 0.01
+            and abs(r["tail_end_js_s"] - r["tail_end_swift_s"]) <= 0.01 and r["length_frames_delta"] == 0):
+        bad.append(r["song"])
+if bad: sys.exit("compare-gbk: JS vs Swift renders differ: " + ", ".join(bad))
+print("compare-gbk: all songs match")
+PY
+fi

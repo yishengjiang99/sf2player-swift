@@ -33,8 +33,9 @@ engine.renderRange(&left, &right)
 ## Fidelity modes
 
 - `.spec` (the only mode): SoundFont **2.01** (`docs/SF2_COMPLIANCE.md` maps every spec requirement to a test).
-- `.gbk`: an alias of `.spec`. gbk's JS engine is now a 2.01 port of this engine (gbk pin `4a3da6234c51`,
-  branch `sf2-201-compliance`), and the two render the same within 1e-6 per sample (`.github/workflows/ci.yml`, job `parity-gbk`).
+- `.gbk`: an alias of `.spec`. gbk's JS engine is now a 2.01 port of this engine (gbk pin `7cda7b3a8cf0`,
+  synced 2026-10-25), and the two render the same within 1e-6 per sample (`.github/workflows/ci.yml`, job `parity-gbk`;
+  whole-song comparison in `docs/compare-gbk.md`).
   Files with `ifil >= 2.04` additionally get the 2.04 behaviour, decided in one place (`SF2SpecVersion`).
 
 ```swift
@@ -62,6 +63,18 @@ lookahead brickwall limiter (-0.3 dBFS, 50 ms release, 1.5 ms lookahead), then a
 never reaches ±1.0. `engine.masterDynamicsEnabled = false` turns it off, and `engine.masterParams` tunes it.
 It is real-time safe. `SF2OfflineRenderer.renderOfflineSequence(..., masterDynamicsEnabled:, masterGainDb:)` exposes
 the same settings, and the WAV writer clamps to ±1 before int16.
+
+gbk extensions (non-normative, synced 2026-10-25):
+- `setEffectParams(SF2EffectsParams(...))`: room size, damping, reverb level (0.5 = FluidSynth's return 2.7), chorus
+  level, depth, rate and delay.
+- `sendCcModulators` (default on): CC91 and CC93 reach the sends of voices whose modulator list has no send modulator.
+- `trackPan` / `trackFader`: per-engine stereo pan and a 10 ms fader, applied after the master bus.
+- `setVoiceOverrides([SF2VoiceOverride], trackIndex:, updateActive:)`: generator overrides per track or engine-wide,
+  either `add` or `set`, with an optional key range.
+- `SF2OfflineRenderer.renderSong(..., tailSeconds:, normalize:)`: renders to the last event plus a tail, then applies
+  one whole-file gain. `normalize` is `.off`, `.peak` or `.loudness(targetLufs:)`; gbk exports use `.gbkDefault`,
+  -16 LUFS capped at -1 dBTP. Loudness is measured by `SF2LoudnessMeter` (BS.1770-4).
+- MIDI 1.0 pedal numbers: CC66 is sostenuto and CC67 is the soft pedal. Before this pass the two were swapped.
 
 Real-time API (no allocation, locks or ARC): `EngineEvent`, `TrackRT`, `dispatch(_:)`,
 `renderScheduled(...)` (pointer form), `setStoreRT`, `setTrackRT`, `resetTracksRT`,

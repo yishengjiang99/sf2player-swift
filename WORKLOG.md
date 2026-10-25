@@ -77,3 +77,21 @@ Saved as /workspace/sf2-baseline.txt (box only; may be lost).
 - sf2-parity-render reads track cc7Volume/cc10Pan/cc11Expression and setControllers events.
 - TrackControllersTests (5). gbk pin -> 305615f. 143 tests, 0 failures locally; GU parity 22 scenarios worst 1.4e-14.
 - gbk #38 merged to main as 4a3da62; pin moved to that merge commit.
+
+## 2026-10-25 gbk sync (gbk 4a3da62 .. 7cda7b3; engine changes up to 19dbdb4)
+- Ported:
+  - CC66 is now sostenuto and CC67 the soft pedal (049f23a).
+  - Reverb: the mono send is summed, and the return matches FluidSynth (2.7). Added setEffectParams (6c9eafc, 4d788d7).
+  - CC91/CC93 send fallback, sendCcModulators (4d788d7).
+  - Voice overrides (4d788d7).
+  - Track pan and fader stage after the master bus (f28fcbf).
+  - BS.1770 loudness meter, gain choice, and renderSong (last event + tail) (c728c6c, 6c9eafc).
+- Not ported, because they are performance-only and bit-exact:
+  - Sustain-level and fc memos.
+  - Master-bus quiet-peak and incremental-min fast paths (19dbdb4).
+- Not ported, because they are app-side and outside the engine: per-track engine topology, the auto-pan StereoPanner,
+  OfflineAudioContext and worker rendering, and WAV encoding.
+- Tests: GbkSyncTests (7) plus the MIDI03/04 controller-number test.
+- parity-gbk pinned to gbk 7cda7b3. It now also runs scripts/compare-gbk/run on 4 songs, which match bit-exact or within 3.7e-9.
+- diff-fluidsynth: added per-case baselines with tolerances of 0.5 dB RMS, 1 dB shape, 5 cents and 0.1 s tail, on top of the global limits.
+
