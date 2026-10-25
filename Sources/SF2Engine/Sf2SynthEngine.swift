@@ -1134,6 +1134,12 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         set { st.pointee.fxOn = newValue }
     }
 
+    /// Global reverb / chorus parameters (gbk `setEffectParams`; `enabled: false` is the off switch). Set while not rendering.
+    public func setEffectParams(_ p: SF2EffectsParams) {
+        if let e = p.enabled { st.pointee.fxOn = e }
+        st.pointee.fx.setParams(p)
+    }
+
     /// Clears the built-in reverb / chorus state. Call while not rendering.
     public func resetEffects() { st.pointee.fx.clear(); st.pointee.master.reset() }
 
