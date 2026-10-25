@@ -106,4 +106,46 @@ final class GbkSyncTests: XCTestCase {
         e.trackFader = -3; XCTAssertEqual(e.trackFader, 0)
         e.trackPan = 7; XCTAssertEqual(e.trackPan, 1)
     }
+
+    /// gbk 4d788d7: per-track / engine-wide generator overrides ("add" / "set", optional key range).
+    func test_voiceOverrides() throws {
+        let wave = B.sine(cycles: 100, n: 4410)
+        let bank = B.single(wave, loop: (0, 4410), instGens: [(Gen.sampleModes, 1), (Gen.initialFilterFc, 10000)])
+        func voices(_ r: SpecRender) -> [Voice] { (0 ..< r.engine.st.pointee.count).map { r.engine.st.pointee.voices[Int(r.engine.st.pointee.order[$0])] } }
+        let ref = try SpecRender(bank); ref.noteOn(60)
+        let base = voices(ref)[0]
+
+        let r = try SpecRender(bank)
+        r.engine.setVoiceOverrides([.init(gen: 8, mode: .set, value: 9000), .init(gen: 48, mode: .add, value: 60, keyLo: 60, keyHi: 64)], trackIndex: 0)
+        r.engine.setVoiceOverrides([.init(gen: 48, mode: .add, value: 40)])          // engine-wide, sums with the track list
+        r.noteOn(60); r.noteOn(70)
+        let v = voices(r)
+        XCTAssertEqual(v[0].initialFc, 9000, accuracy: 1e-9, "set replaces the zone value")
+        XCTAssertEqual(v[1].initialFc, 9000, accuracy: 1e-9)
+        XCTAssertEqual(A.db(v[0].baseGain / base.baseGain), -10, accuracy: 1e-6, "60 + 40 cB inside the key range")
+        XCTAssertEqual(A.db(v[1].baseGain / base.baseGain), -4, accuracy: 1e-6, "key 70: engine-wide 40 cB only")
+        // set is clamped to the 8.1.3 range
+        let c = try SpecRender(bank)
+        c.engine.setVoiceOverrides([.init(gen: 8, mode: .set, value: 99999)], trackIndex: 0); c.noteOn(60)
+        XCTAssertEqual(voices(c)[0].initialFc, 13500, accuracy: 1e-9)
+        // updateActive refreshes realtime generators of sounding voices; removing restores the zone
+        let u = try SpecRender(bank); u.noteOn(60)
+        u.engine.setVoiceOverrides([.init(gen: 8, mode: .add, value: -1200)], trackIndex: 0)
+        XCTAssertEqual(voices(u)[0].initialFc, 10000, accuracy: 1e-9, "not applied to sounding voices by default")
+        u.engine.setVoiceOverrides([.init(gen: 8, mode: .add, value: -1200)], trackIndex: 0, updateActive: true)
+        XCTAssertEqual(voices(u)[0].initialFc, 8800, accuracy: 1e-9)
+        XCTAssertEqual(u.engine.voiceOverrides(trackIndex: 0)?.count, 1)
+        u.engine.setVoiceOverrides(nil, trackIndex: 0, updateActive: true)
+        XCTAssertEqual(voices(u)[0].initialFc, 10000, accuracy: 1e-9)
+        XCTAssertNil(u.engine.voiceOverrides(trackIndex: 0))
+        // other tracks are untouched by a track list
+        let o = try SpecRender(bank)
+        o.engine.setVoiceOverrides([.init(gen: 8, mode: .set, value: 5000)], trackIndex: 3); o.noteOn(60)
+        XCTAssertEqual(voices(o)[0].initialFc, 10000, accuracy: 1e-9)
+        // validation (gbk validateOverride)
+        XCTAssertNil(SF2VoiceOverride(gen: 8, mode: .set, value: 9000).validationError)
+        XCTAssertNotNil(SF2VoiceOverride(gen: 53, mode: .add, value: 1).validationError, "sampleID is not editable")
+        XCTAssertNotNil(SF2VoiceOverride(gen: 8, mode: .set, value: 20000).validationError)
+        XCTAssertNotNil(SF2VoiceOverride(gen: 8, mode: .add, value: 1, keyLo: 70, keyHi: 60).validationError)
+    }
 }

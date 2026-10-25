@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# JS (gbk) vs Swift (this package) offline song renders. Usage: scripts/compare-gbk/run [gbk-dir] [out-dir]
+# Needs: a gbk checkout with node_modules (npm ci), python3 + numpy + scipy, and
+# `swift build -c release --product sf2-parity-render`. Writes <out>/report.jsonl, <out>/report.md and WAVs.
+# SONGS (env) overrides the song list: "name=path/inside/gbk.mid[@maxSeconds]" separated by spaces.
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; ROOT="$(cd "$HERE/../.." && pwd)"
+GBK="$(cd "${1:-$ROOT/../gbk}" && pwd)"; OUT="$(mkdir -p "${2:-$ROOT/.build/compare-gbk}" && cd "${2:-$ROOT/.build/compare-gbk}" && pwd)"
+BIN="${SF2_PARITY_SWIFT_BIN:-$ROOT/.build/release/sf2-parity-render}"
+FONT="${FONT:-$GBK/public/static/GeneralUser-GS.sf2}"; SR="${SR:-44100}"
+SONGS="${SONGS:-midnight-invention=songs/2026-10-23-midnight-invention/song.mid habanera=public/static/bizet_carmen_act-1_05_habanera_(c)yogore.mid@45 never-gonna=public/static/Never-Gonna-Give-You-Up-1.mid@45 hess-233c=public/static/minor_works_hess-233c_(c)unheard-beethoven.mid@45}"
+: > "$OUT/report.jsonl"
+for s in $SONGS; do
+  name="${s%%=*}"; rest="${s#*=}"; mid="${rest%@*}"; max=""; [ "$rest" != "$mid" ] && max="${rest##*@}"
+  python3 "$HERE/midi-to-scenario.py" "$GBK/$mid" "$FONT" "$OUT/$name.json" "$SR" 3 ${max:-1e9}
+  (cd "$GBK" && node --import tsx/esm "$HERE/gbk-render.mts" "$OUT/$name.json" "$OUT/$name-js.f32")
+  "$BIN" "$OUT/$name.json" "$OUT/$name-swift.f32"
+  python3 "$HERE/metrics.py" "$name" "$OUT/$name-js.f32" "$OUT/$name-swift.f32" "$SR" "$OUT" | tee -a "$OUT/report.jsonl"
+  rm -f "$OUT/$name-js.f32" "$OUT/$name-swift.f32"
+done
+python3 - "$OUT/report.jsonl" > "$OUT/report.md" <<'PY'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1])]
+print("| song | s | corr | diff RMS (dB rel) | diff peak | LUFS js / swift (Δ) | peak js / swift | tail end js / swift (s) | band Δ dB (20-125/125-500/500-2k/2k-8k/8k-20k) |")
+print("|---|---|---|---|---|---|---|---|---|")
+for r in rows:
+    b = "/".join(f"{v:+.2f}" for v in r["band_delta_db"].values())
+    print(f"| {r['song']} | {r['seconds']} | {r['corr']} | {r['diff_rms_db_rel']} | {r['diff_peak']} | {r['lufs_js']} / {r['lufs_swift']} ({r['lufs_delta']:+}) | {r['peak_js']} / {r['peak_swift']} | {r['tail_end_js_s']} / {r['tail_end_swift_s']} | {b} |")
+PY
+cat "$OUT/report.md"

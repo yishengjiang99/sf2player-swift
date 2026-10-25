@@ -2,7 +2,7 @@
 // usage: sf2-parity-render <scenario.json> <out.f32>
 // Cross-engine parity tool: renders a scenario through Sf2SynthEngine `.spec` and writes interleaved
 // little-endian Float32 L/R frames. gbk's scripts/parity-render.ts reads the same scenario format.
-// Scenario: { font, sampleRate, frames, effects, sendCcModulators (default false), trackPan, trackFader, masterGainDb, masterDynamics, strict, programs, maxVoices,
+// Scenario: { font, sampleRate, frames, effects, sendCcModulators (default false), trackPan, trackFader, overrides, masterGainDb, masterDynamics, strict, programs, maxVoices,
 //   tracks: [{trackIndex, preset, gain, pan, cc7Volume, cc10Pan, cc11Expression}], events: [{frame, type, channel, trackIndex,
 //   note, velocity, controller, value, program, preset, cc7Volume, cc10Pan, cc11Expression (setControllers)}] }   (preset = preset index -> setPreset with that region list)
 import Foundation
@@ -36,6 +36,14 @@ for t in (scen["tracks"] as? [[String: Any]]) ?? [] {
                                 pan: dbl(t, "pan"), gain: dbl(t, "gain")))
 }
 engine.setTrackStates(tracks)
+// overrides: [{ trackIndex (-1 = all), list: [{gen, mode: "add"|"set", value, keyLo, keyHi}] }]
+for o in (scen["overrides"] as? [[String: Any]]) ?? [] {
+    let list = ((o["list"] as? [[String: Any]]) ?? []).map {
+        SF2VoiceOverride(gen: int($0, "gen") ?? 0, mode: ($0["mode"] as? String) == "set" ? .set : .add, value: dbl($0, "value") ?? 0,
+                         keyLo: int($0, "keyLo"), keyHi: int($0, "keyHi"))
+    }
+    engine.setVoiceOverrides(list, trackIndex: int(o, "trackIndex"))
+}
 var events: [SF2SynthEvent] = []
 for (i, e) in ((scen["events"] as? [[String: Any]]) ?? []).enumerated() {
     let kind: SF2SynthEvent.Kind

@@ -24,6 +24,7 @@ engine.setTrackStates((s.tracks ?? []).map((t: any) => ({
   trackIndex: t.trackIndex ?? 0, regions: t.preset !== undefined ? sf.regionList(t.preset) : undefined, pan: t.pan, gain: t.gain,
   cc7Volume: t.cc7Volume, cc10Pan: t.cc10Pan, cc11Expression: t.cc11Expression,
 })));
+for (const o of s.overrides ?? []) engine.setVoiceOverrides(o.trackIndex ?? -1, o.list ?? null);
 const events = (s.events ?? []).map((e: any, i: number) => ({ ...e, frame: e.frame ?? 0, seq: e.seq ?? i, regions: e.preset !== undefined ? sf.regionList(e.preset) : undefined }));
 const left = new Float32Array(frames), right = new Float32Array(frames);
 let cursor = 0;

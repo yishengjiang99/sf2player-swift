@@ -185,6 +185,10 @@ struct Voice {
     var qCb = 0.0
     /// Whether the voice's modulator list already routes CC91 / CC93 to the sends (gbk `hasSendMods`).
     var hasSendMods = false
+    /// Voice overrides: deltas live in `State.ovr[slot * 61 ..< slot * 61 + 61]`; `region` for refreshes.
+    var hasOvr = false
+    var slot: Int32 = 0
+    var region: UnsafeMutablePointer<VoiceRegion>?
 
     init(sr: Double) {
         volEnv = VolEnv(sr: sr); modEnv = ModEnv(sr: sr); modLfo = LFO(sr: sr); vibLfo = LFO(sr: sr); lpf = TwoPoleLPF(sr: sr)
@@ -236,6 +240,12 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         /// Track output stage (gbk f28fcbf): stereo-input pan matrix + 10 ms one-pole fader, after the master bus.
         var trackPan = 0.0, panLL = 1.0, panRL = 0.0, panLR = 0.0, panRR = 1.0
         var faderTarget = 1.0, faderValue = 1.0, faderCoef = 0.0
+        /// Voice overrides (gbk 4d788d7): per-slot generator deltas (capacity x 61) and the override lists by
+        /// trackIndex + 1 (slot 0 = every voice of this engine).
+        var ovr: UnsafeMutablePointer<Double>
+        var ovrLists: UnsafeMutablePointer<UnsafeMutablePointer<OverrideRT>?>
+        var ovrCounts: UnsafeMutablePointer<Int>
+        var ovrScratch: UnsafeMutablePointer<Double>
         var masterGainDb = -3.0
         var masterGain = pow(10, -3.0 / 20)
     }
@@ -270,9 +280,18 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         poly.initialize(repeating: 0, count: 16 * 128)
         let programs = UnsafeMutablePointer<Int32>.allocate(capacity: 129 * 128)
         programs.initialize(repeating: -1, count: 129 * 128)
+        let ovr = UnsafeMutablePointer<Double>.allocate(capacity: cap * 61)
+        ovr.initialize(repeating: 0, count: cap * 61)
+        let ovrLists = UnsafeMutablePointer<UnsafeMutablePointer<OverrideRT>?>.allocate(capacity: Self.maxTracks + 1)
+        ovrLists.initialize(repeating: nil, count: Self.maxTracks + 1)
+        let ovrCounts = UnsafeMutablePointer<Int>.allocate(capacity: Self.maxTracks + 1)
+        ovrCounts.initialize(repeating: 0, count: Self.maxTracks + 1)
+        let ovrScratch = UnsafeMutablePointer<Double>.allocate(capacity: 61)
+        ovrScratch.initialize(repeating: 0, count: 61)
         st = .allocate(capacity: 1)
         st.initialize(to: State(maxVoices: mv, capacity: cap, voices: voices, order: order, free: free, freeCount: cap,
-                                tracks: tracks, store: store.hdr, chans: chans, ccs: ccs, nrpn: nrpn, poly: poly, programs: programs, fx: SF2EffectsRT(sr: outSr), master: MasterBusRT(sampleRate: outSr)))
+                                tracks: tracks, store: store.hdr, chans: chans, ccs: ccs, nrpn: nrpn, poly: poly, programs: programs, fx: SF2EffectsRT(sr: outSr), master: MasterBusRT(sampleRate: outSr),
+                                ovr: ovr, ovrLists: ovrLists, ovrCounts: ovrCounts, ovrScratch: ovrScratch))
         st.pointee.faderCoef = 1 - exp(-1 / (0.01 * outSr))
         resetChannelsRT()
     }
@@ -285,6 +304,9 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         s.chans.deallocate(); s.ccs.deallocate(); s.nrpn.deallocate(); s.poly.deallocate(); s.programs.deallocate()
         s.fx.free()
         s.master.free()
+        s.ovr.deallocate(); s.ovrScratch.deallocate(); s.ovrCounts.deallocate()
+        for i in 0 ... Self.maxTracks { s.ovrLists[i]?.deallocate() }
+        s.ovrLists.deallocate()
         st.deinitialize(count: 1); st.deallocate()
     }
 
@@ -334,6 +356,10 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         free.update(from: s.free, count: s.freeCount)
         var fc = s.freeCount
         for slot in stride(from: cap - 1, through: s.capacity, by: -1) { free[fc] = Int32(slot); fc += 1 }
+        let ovr = UnsafeMutablePointer<Double>.allocate(capacity: cap * 61)
+        ovr.initialize(repeating: 0, count: cap * 61)
+        ovr.update(from: s.ovr, count: s.capacity * 61)
+        s.ovr.deallocate(); s.ovr = ovr
         s.voices.deinitialize(count: s.capacity); s.voices.deallocate(); s.order.deallocate(); s.free.deallocate()
         s.voices = voices; s.order = order; s.free = free; s.freeCount = fc; s.capacity = cap
         st.pointee = s
@@ -794,12 +820,69 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         voice.modToPitch = Double(reg.modLfoToPitchCents)
         voice.modEnvToFc = Double(reg.modEnvToFilterFcCents)
         voice.modLfoToFc = Double(reg.modLfoToFilterFcCents)
+        voice.slot = Int32(v - st.pointee.voices)
+        voice.region = r
+        voice.hasOvr = loadOverrides(slot: Int(voice.slot), trackIndex: trackIndex, r, key: effKey)
         if st.pointee.spec {
             specVoice(&voice, r, note: effKey, velocity: effVel, trackGain: trackVolumeMul)
         }
         voice.volEnv.noteOn()
         voice.modEnv.noteOn()
         v.pointee = voice
+    }
+
+    // MARK: - Voice overrides (gbk 4d788d7)
+
+    /// Non-real-time (call while not rendering): installs generator overrides for a track (`trackIndex` nil or < 0 =
+    /// every voice of this engine; both lists sum). `updateActive` refreshes the realtime generators (filter, pitch,
+    /// LFO depths, pan, attenuation, sends) of sounding voices; envelope times / LFO rates stay note-on only.
+    public func setVoiceOverrides(_ list: [SF2VoiceOverride]?, trackIndex: Int? = nil, updateActive: Bool = false) {
+        let ti = trackIndex ?? -1
+        let slot = ti >= 0 && ti < Self.maxTracks ? ti + 1 : 0
+        let s = st
+        s.pointee.ovrLists[slot]?.deallocate(); s.pointee.ovrLists[slot] = nil; s.pointee.ovrCounts[slot] = 0
+        if let list, !list.isEmpty {
+            let p = UnsafeMutablePointer<OverrideRT>.allocate(capacity: list.count)
+            for (i, o) in list.enumerated() {
+                (p + i).initialize(to: OverrideRT(gen: Int32(truncatingIfNeeded: o.gen), set: o.mode == .set, value: o.value,
+                                                  keyLo: Int32(o.keyLo ?? -1), keyHi: Int32(o.keyHi ?? -1)))
+            }
+            s.pointee.ovrLists[slot] = p; s.pointee.ovrCounts[slot] = list.count
+        }
+        voiceOverrides[slot] = list?.isEmpty == false ? list : nil
+        guard updateActive else { return }
+        withUnsafeTemporaryAllocation(of: Double.self, capacity: SF2Modulator.slotCount) { buf in
+            let d = buf.baseAddress!
+            for i in 0 ..< s.pointee.count {
+                let v = s.pointee.voices + Int(s.pointee.order[i])
+                guard let r = v.pointee.region, slot == 0 || Int(v.pointee.trackIndex) == ti else { continue }
+                v.pointee.hasOvr = loadOverrides(slot: Int(v.pointee.slot), trackIndex: v.pointee.trackIndex, r, key: Int(v.pointee.effKey))
+                guard v.pointee.spec else { continue }
+                evalMods(v.pointee, d)
+                applyLive(&v.pointee, d)
+            }
+        }
+    }
+
+    /// The list installed for `trackIndex` (nil / < 0 = the engine-wide list).
+    public func voiceOverrides(trackIndex: Int? = nil) -> [SF2VoiceOverride]? {
+        let ti = trackIndex ?? -1
+        return voiceOverrides[ti >= 0 && ti < Self.maxTracks ? ti + 1 : 0]
+    }
+    private var voiceOverrides = [Int: [SF2VoiceOverride]]()
+
+    /// Engine-wide + track deltas into the voice slot's buffer. Allocation-free.
+    @inline(__always) private func loadOverrides(slot: Int, trackIndex: Int32, _ r: UnsafeMutablePointer<VoiceRegion>, key: Int) -> Bool {
+        let s = st.pointee
+        let out = s.ovr + slot * 61
+        var any = computeOverrideDeltas(s.ovrLists[0], s.ovrCounts[0], r.pointee, key: key, out)
+        if trackIndex >= 0 && Int(trackIndex) < Self.maxTracks, s.ovrCounts[Int(trackIndex) + 1] > 0 {
+            if computeOverrideDeltas(s.ovrLists[Int(trackIndex) + 1], s.ovrCounts[Int(trackIndex) + 1], r.pointee, key: key, s.ovrScratch) {
+                for k in 0 ..< 61 { out[k] += s.ovrScratch[k] }
+                any = true
+            }
+        }
+        return any
     }
 
     // MARK: - SoundFont 2.01 (.spec; 2.04 features gated by SF2SpecVersion)
@@ -819,6 +902,10 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         let c = Int(max(0, min(15, voice.channel)))
         let nr = st.pointee.nrpn + c * 64
         for k in 0 ..< 64 { d[k] = nr[k] }
+        if voice.hasOvr {
+            let o = st.pointee.ovr + Int(voice.slot) * 61
+            for k in 0 ..< 61 { d[k] += o[k] }
+        }
         if st.pointee.sendCcMods && !voice.hasSendMods {
             let cc = st.pointee.ccs + c * 128
             if cc[91] != 0 { d[16] += 200 * (Double(cc[91]) / 128) }   // 8.4.8: linear unipolar CC91 x 200
