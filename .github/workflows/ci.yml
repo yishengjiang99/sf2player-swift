@@ -57,3 +57,19 @@ jobs:
       - run: COMPARE_GATE=1 scripts/compare-gbk/run ../gbk compare-gbk-out
       - if: always()
         run: cat compare-gbk-out/report.md >> "$GITHUB_STEP_SUMMARY" || true
+  downstream:
+    # API compatibility: build + test both apps' SF2Player package (macOS: AVFoundation player included) against
+    # this commit, by rewriting their pinned revision in a scratch checkout. The apps themselves are not changed.
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [earsheet, omr-sheet-cam]
+    steps:
+      - run: git clone -q --depth 1 https://github.com/yishengjiang99/${{ matrix.app }}.git app
+      - run: |
+          cd app/Packages/SF2Player
+          sed -i '' -E 's#(sf2player-swift.git", revision: ")[0-9a-f]+#\1${{ github.sha }}#' Package.swift
+          grep -n 'sf2player-swift.git' Package.swift
+          rm -f Package.resolved
+          swift test
