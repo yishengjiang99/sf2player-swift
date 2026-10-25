@@ -76,8 +76,8 @@ every test named must exist under `Tests/`; status must be `pass`, `n/a (reason)
 | M-12 | §10.5 | Modulated destinations re-clamped | test_M12_modulatedValuesReclamped | pass |
 | MIDI-01 | §9.2 | Note-on velocity 0 = note-off | test_MIDI01_velocityZeroIsNoteOff | pass |
 | MIDI-02 | §9.2 | CC64 sustain | test_MIDI02_sustainPedal | pass |
-| MIDI-03 | §9.2 | CC67 sostenuto | test_MIDI03_sostenuto | pass |
-| MIDI-04 | §9.2 | CC66 soft pedal (engine amounts: +60 cB, −600 cents Fc at note-on) | test_MIDI04_softPedal | pass |
+| MIDI-03 | §9.2 | CC66 sostenuto (MIDI 1.0; was CC67 before gbk 049f23a) | test_MIDI03_sostenuto | pass |
+| MIDI-04 | §9.2 | CC67 soft pedal (engine amounts: +60 cB, −600 cents Fc at note-on) | test_MIDI04_softPedal | pass |
 | MIDI-05 | §9.2 | CC120 all sound off / CC123 all notes off | test_MIDI05_allSoundOffAllNotesOff | pass |
 | MIDI-06 | §9.2 | CC121 reset all controllers | test_MIDI06_resetAllControllers | pass |
 | MIDI-07 | §9.2, §7.2 | Bank select + program change | test_MIDI07_programChange | pass |

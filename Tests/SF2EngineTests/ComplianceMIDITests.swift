@@ -26,23 +26,35 @@ final class ComplianceMIDITests: XCTestCase {
     func test_MIDI03_sostenuto() throws {
         let r = try SpecRender(held())
         r.noteOn(60)
-        r.cc(67, 127)          // 60 is held now
+        r.cc(66, 127)          // 60 is held now
         r.noteOn(62)           // pressed after: not held by sostenuto
         r.noteOff(60); r.noteOff(62)
         XCTAssertEqual(voices(r).map { $0.note }, [60, 62])
         XCTAssertEqual(releasing(r), [false, true])
         r.cc(64, 127); r.cc(64, 0)   // sustain cycling does not release a sostenuto note
         XCTAssertEqual(releasing(r)[0], false)
-        r.cc(67, 0)
+        r.cc(66, 0)
         XCTAssertEqual(releasing(r)[0], true)
     }
 
     func test_MIDI04_softPedal() throws {
         let r = try SpecRender(held([(Gen.initialFilterFc, 9000)]))
-        r.noteOn(60); r.cc(66, 127); r.noteOn(62)
+        r.noteOn(60); r.cc(67, 127); r.noteOn(62)
         let v = voices(r)
         XCTAssertEqual(v[1].initialFc, v[0].initialFc - Sf2SynthEngine.softPedalFcCents, accuracy: 1e-9)
         XCTAssertEqual(A.db(v[1].baseGain / v[0].baseGain), -Sf2SynthEngine.softPedalAttenuationCb / 10, accuracy: 0.01)
+    }
+
+    /// gbk 049f23a: MIDI 1.0 numbering. CC66 is sostenuto only (no soft-pedal effect), CC67 is the soft pedal only.
+    func test_MIDI03_04_controllerNumbers() throws {
+        let r = try SpecRender(held([(Gen.initialFilterFc, 9000)]))
+        r.noteOn(60); r.cc(66, 127); r.noteOn(62)
+        let v = voices(r)
+        XCTAssertEqual(v[1].initialFc, v[0].initialFc, accuracy: 1e-9, "CC66 does not soften")
+        XCTAssertEqual(v[1].baseGain, v[0].baseGain, accuracy: 1e-12)
+        let q = try SpecRender(held())
+        q.noteOn(60); q.cc(67, 127); q.noteOff(60)
+        XCTAssertEqual(releasing(q), [true], "CC67 does not hold like sostenuto")
     }
 
     func test_MIDI05_allSoundOffAllNotesOff() throws {
@@ -53,7 +65,7 @@ final class ComplianceMIDITests: XCTestCase {
         r.cc(64, 0)
         XCTAssertEqual(releasing(r), [true, true])
         r = try SpecRender(held())
-        r.noteOn(60); r.cc(64, 127); r.cc(67, 127)
+        r.noteOn(60); r.cc(64, 127); r.cc(66, 127)
         r.cc(120, 0)
         XCTAssertEqual(r.render(1).l[0], 0, "CC120: no release tail, regardless of pedals")
         XCTAssertEqual(r.engine.st.pointee.count, 0)

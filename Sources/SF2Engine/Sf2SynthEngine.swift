@@ -862,8 +862,8 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         voice.regModLfoFc = Double(reg.modLfoToFilterFcCents); voice.regModEnvFc = Double(reg.modEnvToFilterFcCents)
         voice.regModLfoVol = Double(reg.modLfoToVolumeCb)
         voice.regChorus = Double(reg.chorusSend); voice.regReverb = Double(reg.reverbSend)
-        // MIDI-04 soft pedal (CC66 >= 64 at note-on): -6 dB (60 cB) and -600 cents cutoff (engine choice).
-        if st.pointee.ccs[Int(max(0, min(15, voice.channel))) * 128 + 66] >= 64 {
+        // MIDI-04 soft pedal (CC67 >= 64 at note-on, MIDI 1.0): -6 dB (60 cB) and -600 cents cutoff (engine choice).
+        if st.pointee.ccs[Int(max(0, min(15, voice.channel))) * 128 + 67] >= 64 {
             voice.regAtten += Self.softPedalAttenuationCb; voice.regFc -= Self.softPedalFcCents
         }
         voice.baseRate0 = voice.baseRate
@@ -986,7 +986,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
             }
         case 64:
             if value < 64 && old >= 64 { releaseDeferred(channel) }           // MIDI-02
-        case 67:                                                                // MIDI-03
+        case 66:                                                                // MIDI-03 CC66 sostenuto (MIDI 1.0)
             if value >= 64 && !ch.pointee.sostenuto {
                 ch.pointee.sostenuto = true
                 for i in 0 ..< s.count {
