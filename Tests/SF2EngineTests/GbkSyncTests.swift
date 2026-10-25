@@ -148,4 +148,46 @@ final class GbkSyncTests: XCTestCase {
         XCTAssertNotNil(SF2VoiceOverride(gen: 8, mode: .set, value: 20000).validationError)
         XCTAssertNotNil(SF2VoiceOverride(gen: 8, mode: .add, value: 1, keyLo: 70, keyHi: 60).validationError)
     }
+
+    /// gbk 6c9eafc: BS.1770 integrated loudness / true peak and the whole-file gain choice.
+    func test_loudnessMeterAndGain() {
+        let sr = 48000.0, n = Int(sr * 5)
+        let x = (0 ..< n).map { Float(0.1 * sin(2 * Double.pi * 997 * Double($0) / sr)) }
+        let m = SF2LoudnessMeter(sampleRate: sr)
+        m.push(x, x)
+        let s = m.result()
+        XCTAssertEqual(s.integratedLufs, -20, accuracy: 0.1, "-20 dBFS 997 Hz sine in both channels = -20 LUFS")
+        XCTAssertEqual(s.samplePeakDbFS, -20, accuracy: 0.01)
+        XCTAssertEqual(s.truePeakDbTP, -20, accuracy: 0.1)
+        let loud = SF2LoudnessReport.choose(.gbkDefault, s, meter: m)
+        XCTAssertEqual(loud.limitedBy, .loudness); XCTAssertEqual(loud.gainDb, 4, accuracy: 0.1)
+        XCTAssertEqual(loud.outputLufs, -16, accuracy: 0.01)
+        let capped = SF2LoudnessReport.choose(.loudness(targetLufs: -0.5), s, meter: m)
+        XCTAssertEqual(capped.limitedBy, .truePeak); XCTAssertEqual(capped.outputTruePeakDbTP, -1, accuracy: 1e-9)
+        XCTAssertEqual(SF2LoudnessReport.choose(.peak, s).gainDb, 19, accuracy: 0.1)
+        XCTAssertEqual(SF2LoudnessReport.choose(.off, s).gainLinear, 1)
+        let silent = SF2LoudnessMeter(sampleRate: sr); silent.push([Float](repeating: 0, count: 48000), [Float](repeating: 0, count: 48000))
+        XCTAssertEqual(silent.result().integratedLufs, -.infinity)
+        XCTAssertEqual(SF2LoudnessReport.choose(.gbkDefault, silent.result()).gainDb, 0)
+    }
+
+    /// gbk c728c6c: song renders end at the last event + tail (release kept), then one normalisation gain.
+    func test_renderSongTailAndNormalize() throws {
+        let wave = B.sine(cycles: 100, n: 4410)
+        let sf = try SF2SoundFont(data: B.single(wave, loop: (0, 4410), instGens: [(Gen.sampleModes, 1), (Gen.releaseVolEnv, 0)]).build(), options: .strict)
+        let tracks = [SF2TrackState(trackIndex: 0, regions: try sf.regionList(forPreset: 0, fidelity: .spec))]
+        let events: [SF2SynthEvent] = [.noteOn(60, velocity: 100, frame: 0, trackIndex: 0, channel: 0), .noteOff(60, frame: 22050, seq: 1, trackIndex: 0, channel: 0)]
+        let a = SF2OfflineRenderer.renderSong(sampleRate: 44100, tracks: tracks, events: events, tailSeconds: 2)
+        XCTAssertEqual(a.musicFrames, 22050); XCTAssertEqual(a.buffer.length, 22050 + 88200)
+        XCTAssertGreaterThan(A.rmsDB(Array(a.buffer.left[22050 ..< 22050 + 4410])), -40, "release tail kept (1 s release)")
+        XCTAssertEqual(a.loudness.gainLinear, 1)
+        let b = SF2OfflineRenderer.renderSong(sampleRate: 44100, tracks: tracks, events: events, tailSeconds: 2, normalize: .gbkDefault)
+        let m = SF2LoudnessMeter(sampleRate: 44100); m.push(b.buffer.left, b.buffer.right)
+        let out = m.result()
+        if b.loudness.limitedBy == .loudness { XCTAssertEqual(out.integratedLufs, -16, accuracy: 0.05) }
+        XCTAssertLessThanOrEqual(out.truePeakDbTP, -1 + 0.01)
+        for i in stride(from: 0, to: a.buffer.length, by: 997) {
+            XCTAssertEqual(Double(b.buffer.left[i]), Double(a.buffer.left[i]) * b.loudness.gainLinear, accuracy: 1e-6)
+        }
+    }
 }
