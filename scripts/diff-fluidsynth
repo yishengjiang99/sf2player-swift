@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Renders a fixed set of notes through SF2Engine (.spec) and FluidSynth and writes diff-report.md:
 # per case, RMS level difference (dB), envelope-shape difference (max |dB| over 10 ms windows above
-# -60 dB), f0 difference (cents) and release-tail time difference. Informational: FluidSynth deviates
+# -60 dB), f0 difference (cents) and release-tail time difference. Exits non-zero when a case exceeds the
+# limits in scripts/diff-report.py. FluidSynth deviates
 # from the 2.01 text in places (see docs/SF2_COMPLIANCE.md "Deviations from FluidSynth").
 # usage: scripts/diff-fluidsynth [font.sf2] [report.md]   (needs fluidsynth on PATH, python3)
 set -euo pipefail

@@ -19,16 +19,19 @@ jobs:
       - run: scripts/fetch-soundfont
       - run: swift test
   diff-fluidsynth:
-    # Informational comparison against FluidSynth (deviations are expected; see docs/SF2_COMPLIANCE.md).
+    # Comparison against FluidSynth (some deviations are expected; see docs/SF2_COMPLIANCE.md). Fails when any
+    # case's deviation exceeds the limits in scripts/diff-report.py (set just above the current measurement).
     runs-on: ubuntu-latest
     container: swift:6.0
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - run: apt-get update -qq && apt-get install -y -qq curl fluidsynth python3 >/dev/null
       - run: scripts/fetch-soundfont
-      - run: scripts/diff-fluidsynth && cat diff-report.md >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - run: scripts/diff-fluidsynth
+      - if: always()
+        run: cat diff-report.md >> "$GITHUB_STEP_SUMMARY" || true
+      - if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: diff-report
           path: diff-report.md
