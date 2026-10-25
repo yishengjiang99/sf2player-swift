@@ -72,4 +72,38 @@ final class GbkSyncTests: XCTestCase {
         XCTAssertTrue(voice0(r).hasSendMods)
         XCTAssertEqual(voice0(r).reverbAmt, 0.2 * 127 / 128, accuracy: 1e-12)
     }
+
+    /// gbk f28fcbf: per-engine track pan (stereo-input StereoPanner law) and 10 ms fader after the master bus.
+    func test_trackOutputStage() throws {
+        let wave = B.sine(cycles: 100, n: 4410)
+        func run(_ setup: (Sf2SynthEngine) -> Void) throws -> (l: [Float], r: [Float]) {
+            let r = try SpecRender(B.single(wave, loop: (0, 4410), instGens: [(Gen.sampleModes, 1), (Gen.pan, -200)]))
+            setup(r.engine); r.noteOn(60); return r.render(4410)
+        }
+        let ref = try run { _ in }
+        let same = try run { $0.trackPan = 0; $0.trackFader = 1 }
+        XCTAssertEqual(ref.l, same.l, "identity is bit-exact"); XCTAssertEqual(ref.r, same.r)
+        let left = try run { $0.trackPan = -1 }
+        for i in stride(from: 0, to: 4410, by: 61) {
+            XCTAssertEqual(left.l[i], ref.l[i] + ref.r[i], accuracy: 1e-6); XCTAssertEqual(left.r[i], 0, accuracy: 1e-7)
+        }
+        let half = try run { $0.trackPan = 0.5 }
+        let g = Sf2SynthEngine.stereoPanGains(0.5)
+        XCTAssertEqual(g.ll, cos(Double.pi / 4), accuracy: 1e-15); XCTAssertEqual(g.rr, 1)
+        for i in stride(from: 0, to: 4410, by: 61) {
+            XCTAssertEqual(Double(half.l[i]), Double(ref.l[i]) * g.ll, accuracy: 1e-6)
+            XCTAssertEqual(Double(half.r[i]), Double(ref.l[i]) * g.lr + Double(ref.r[i]), accuracy: 1e-6)
+        }
+        // fader: 10 ms one-pole from 1 toward the target
+        let e = Sf2SynthEngine(outSr: 44100)
+        e.trackFader = 0.25
+        var l = [Float](repeating: 0, count: 441), r = l
+        e.renderRange(&l, &r)
+        XCTAssertEqual(e.trackFaderCurrent, 0.25 + 0.75 * exp(-1), accuracy: 1e-3, "one time constant after 10 ms")
+        l = [Float](repeating: 0, count: 44100); r = l
+        e.renderRange(&l, &r)
+        XCTAssertEqual(e.trackFaderCurrent, 0.25, "snaps to the target")
+        e.trackFader = -3; XCTAssertEqual(e.trackFader, 0)
+        e.trackPan = 7; XCTAssertEqual(e.trackPan, 1)
+    }
 }

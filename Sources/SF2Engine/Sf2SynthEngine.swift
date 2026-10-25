@@ -233,6 +233,9 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         var masterOn = true
         /// gbk `sendCcModulators`: 8.4.8 / 8.4.9 CC91 / CC93 send fallback for voices whose list lacks them.
         var sendCcMods = true
+        /// Track output stage (gbk f28fcbf): stereo-input pan matrix + 10 ms one-pole fader, after the master bus.
+        var trackPan = 0.0, panLL = 1.0, panRL = 0.0, panLR = 0.0, panRR = 1.0
+        var faderTarget = 1.0, faderValue = 1.0, faderCoef = 0.0
         var masterGainDb = -3.0
         var masterGain = pow(10, -3.0 / 20)
     }
@@ -270,6 +273,7 @@ public final class Sf2SynthEngine: @unchecked Sendable {
         st = .allocate(capacity: 1)
         st.initialize(to: State(maxVoices: mv, capacity: cap, voices: voices, order: order, free: free, freeCount: cap,
                                 tracks: tracks, store: store.hdr, chans: chans, ccs: ccs, nrpn: nrpn, poly: poly, programs: programs, fx: SF2EffectsRT(sr: outSr), master: MasterBusRT(sampleRate: outSr)))
+        st.pointee.faderCoef = 1 - exp(-1 / (0.01 * outSr))
         resetChannelsRT()
     }
 
@@ -1187,12 +1191,53 @@ public final class Sf2SynthEngine: @unchecked Sendable {
     @inline(__always) private func applyMaster(_ l: Double, _ r: Double) -> (Double, Double) {
         let s = st
         let g = s.pointee.masterGain
+        var ol = l * g, or = r * g
         if s.pointee.masterOn {
-            s.pointee.master.process(l * g, r * g)
-            return (s.pointee.master.outL, s.pointee.master.outR)
+            s.pointee.master.process(ol, or)
+            ol = s.pointee.master.outL; or = s.pointee.master.outR
         }
-        return (l * g, r * g)
+        // Track output stage (identity at pan 0 / fader 1, bit-exact).
+        var f = s.pointee.faderValue
+        if f != s.pointee.faderTarget {
+            f += (s.pointee.faderTarget - f) * s.pointee.faderCoef
+            if abs(s.pointee.faderTarget - f) < 1e-7 { f = s.pointee.faderTarget }
+            s.pointee.faderValue = f
+        }
+        if s.pointee.trackPan == 0 && f == 1 { return (ol, or) }
+        return ((ol * s.pointee.panLL + or * s.pointee.panRL) * f, (ol * s.pointee.panLR + or * s.pointee.panRR) * f)
     }
+
+    // MARK: - Track output stage (non-normative, gbk f28fcbf)
+    // Per-engine orchestra pan + fader applied AFTER the master bus: the in-engine replacement for a host's
+    // StereoPanner -> Gain node pair (one engine per app track). Distinct from per-voice pan (region / track pan +
+    // CC10 default modulator, linear law), which is untouched.
+
+    /// Stereo-input pan law of the track stage (Web Audio StereoPannerNode for stereo input; gbk `stereoPanGains`).
+    public static func stereoPanGains(_ pan: Double) -> (ll: Double, rl: Double, lr: Double, rr: Double) {
+        let p = max(-1, min(1, pan))
+        if p <= 0 { let x = (p + 1) * Double.pi / 2; return (1, cos(x), 0, sin(x)) }
+        let x = p * Double.pi / 2
+        return (cos(x), 0, sin(x), 1)
+    }
+
+    /// Track pan -1...1 (0 = identity). Set between render calls.
+    public var trackPan: Double {
+        get { st.pointee.trackPan }
+        set {
+            let p = max(-1, min(1, newValue.isFinite ? newValue : 0))
+            if p == st.pointee.trackPan { return }
+            st.pointee.trackPan = p
+            let g = Self.stereoPanGains(p)
+            st.pointee.panLL = g.ll; st.pointee.panRL = g.rl; st.pointee.panLR = g.lr; st.pointee.panRR = g.rr
+        }
+    }
+    /// Track fader target as a linear gain (default 1); the output approaches it with a 10 ms one-pole.
+    public var trackFader: Double {
+        get { st.pointee.faderTarget }
+        set { st.pointee.faderTarget = max(0, newValue.isFinite ? newValue : 1) }
+    }
+    /// Current (smoothed) fader gain.
+    public var trackFaderCurrent: Double { st.pointee.faderValue }
 
     @inline(__always) private func clearSends() {
         st.pointee.revL = 0; st.pointee.revR = 0; st.pointee.choL = 0; st.pointee.choR = 0
